@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShopMind AI — Smart Laptop Shopping</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- ── Chat panel ──────────────────────── -->
+    <div class="chat-panel">
+      <div class="chat-header">
+        <h1>🧠 ShopMind AI <span class="badge">Agentic Commerce</span></h1>
+        <div class="header-actions">
+          <a href="/dashboard.html">📊 Merchant Dashboard</a>
+        </div>
+      </div>
+
+      <div class="messages-container" id="messages"></div>
+
+      <div class="input-area">
+        <div class="input-wrapper">
+          <input type="text" id="user-input" placeholder="Ask me about laptops — budget, use case, comparisons..."
+                 autocomplete="off">
+          <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Cart sidebar ────────────────────── -->
+    <div class="cart-sidebar">
+      <div class="cart-header">🛒 Cart <span id="cart-count" style="color: var(--text-muted); font-weight: 400;">(0 items)</span></div>
+      <div class="cart-items" id="cart-items">
+        <div class="cart-empty">Your cart is empty.<br>Ask the AI to recommend laptops!</div>
+      </div>
+      <div class="cart-footer">
+        <div class="cart-total">
+          <span>Total</span>
+          <span id="cart-total">₹0</span>
+        </div>
+        <button class="btn-checkout" id="checkout-btn" disabled onclick="requestCheckout()">Checkout</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/chat.js"></script>
+  <script src="/js/checkout.js"></script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+-- ============================================================
+-- ShopMind AI — Database Schema
+-- ============================================================
+-- All tables use IF NOT EXISTS for idempotent runs.
+-- Designed for Supabase Postgres (standard PostgreSQL 15+).
+-- ============================================================
+
+-- Products table: laptops and accessories
+CREATE TABLE IF NOT EXISTS products (
+    id              SERIAL PRIMARY KEY,
+    name            VARCHAR(255) NOT NULL,
+    price           NUMERIC(10, 2) NOT NULL,
+    ram_gb          INTEGER,
+    gpu             VARCHAR(100),
+    cpu             VARCHAR(100),
+    use_case        TEXT[] DEFAULT '{}',
+    stock           INTEGER NOT NULL DEFAULT 0,
+    category        VARCHAR(50) NOT NULL DEFAULT 'laptop'
+);
+
+-- Cart items: per-session shopping cart
+CREATE TABLE IF NOT EXISTS cart_items (
+    id              SERIAL PRIMARY KEY,
+    session_id      VARCHAR(100) NOT NULL,
+    product_id      INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    quantity        INTEGER NOT NULL DEFAULT 1,
+    source          VARCHAR(20) NOT NULL DEFAULT 'organic'
+                    CHECK (source IN ('ai_recommendation', 'ai_upsell', 'organic')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cart_items_session ON cart_items(session_id);
+
+-- Orders: tracks checkout and payment lifecycle
+CREATE TABLE IF NOT EXISTS orders (
+    id                          SERIAL PRIMARY KEY,
+    session_id                  VARCHAR(100) NOT NULL,
+    total                       NUMERIC(10, 2),
+    ai_assisted                 BOOLEAN DEFAULT FALSE,
+    ai_recommended_product_id   INTEGER REFERENCES products(id),
+    actual_product_purchased_id INTEGER REFERENCES products(id),
+    upsell_accepted             BOOLEAN,
+    upsell_amount               NUMERIC(10, 2),
+    razorpay_order_id           VARCHAR(100),
+    razorpay_payment_id         VARCHAR(100),
+    status                      VARCHAR(20) NOT NULL DEFAULT 'created'
+                                CHECK (status IN ('created', 'paid', 'failed')),
+    failure_reason              TEXT,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_session ON orders(session_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+
+-- AI Actions: full audit trail of every agent tool call
+CREATE TABLE IF NOT EXISTS ai_actions (
+    id              SERIAL PRIMARY KEY,
+    session_id      VARCHAR(100) NOT NULL,
+    agent_name      VARCHAR(50) NOT NULL DEFAULT 'shopmind_v1',
+    action_type     VARCHAR(50) NOT NULL DEFAULT 'tool_call',
+    tool_name       VARCHAR(100),
+    input           JSONB,
+    output          JSONB,
+    decision        TEXT,
+    user_approved   BOOLEAN,
+    success         BOOLEAN,
+    timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_actions_session ON ai_actions(session_id);
+CREATE INDEX IF NOT EXISTS idx_ai_actions_timestamp ON ai_actions(timestamp);
+
+-- Co-purchase history: tracks which products are frequently bought together
+CREATE TABLE IF NOT EXISTS co_purchase_history (
+    product_id              INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    complementary_product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    co_purchase_count       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (product_id, complementary_product_id)
+);

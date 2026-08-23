@@ -1,0 +1,205 @@
+/**
+ * dashboard.js — Merchant dashboard data fetching and rendering.
+ *
+ * Loads business metrics, AI decision trace, orders table, and
+ * failure handling details from the dashboard API endpoints.
+ */
+
+function formatPrice(amount) {
+  if (amount == null || amount === 0) return '₹0';
+  return '₹' + Number(amount).toLocaleString('en-IN');
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function truncate(str, max = 60) {
+  if (!str) return '—';
+  return str.length > max ? str.substring(0, max) + '…' : str;
+}
+
+// ── Load business metrics ──────────────────────
+
+async function loadSummary() {
+  try {
+    const res = await fetch('/api/dashboard/summary');
+    const data = await res.json();
+
+    document.getElementById('m-revenue').textContent = formatPrice(data.total_revenue);
+    document.getElementById('m-orders').textContent = data.total_orders;
+    document.getElementById('m-ai-pct').textContent = data.ai_assisted_percentage + '%';
+    document.getElementById('m-aov').textContent = formatPrice(data.avg_order_value);
+    document.getElementById('m-ai-revenue').textContent = formatPrice(data.ai_assisted_revenue);
+    document.getElementById('m-upsells').textContent = data.upsell_accepted_count;
+    document.getElementById('m-upsell-rev').textContent = formatPrice(data.upsell_revenue);
+    document.getElementById('m-failed').textContent = data.failed_orders_count;
+  } catch (err) {
+    console.error('Failed to load summary:', err);
+  }
+}
+
+// ── Load sessions for selector ─────────────────
+
+async function loadSessions() {
+  try {
+    const res = await fetch('/api/dashboard/sessions');
+    const data = await res.json();
+    const select = document.getElementById('session-select');
+
+    data.sessions.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.session_id;
+      opt.textContent = `${s.session_id.substring(0, 8)}… (${s.action_count} actions)`;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Failed to load sessions:', err);
+  }
+}
+
+// ── Load AI Decision Trace ─────────────────────
+
+async function loadAiActions() {
+  try {
+    const sessionId = document.getElementById('session-select').value;
+    const url = sessionId
+      ? `/api/dashboard/ai-actions?session_id=${sessionId}`
+      : '/api/dashboard/ai-actions';
+
+    const res = await fetch(url);
+    const data = await res.json();
+    const container = document.getElementById('ai-actions-list');
+
+    if (!data.actions || data.actions.length === 0) {
+      container.innerHTML = '<div class="cart-empty">No AI actions recorded yet.</div>';
+      return;
+    }
+
+    container.innerHTML = data.actions.map(action => {
+      const statusClass = action.success === false ? 'failure' :
+                           action.user_approved === null && action.tool_name in ['add_to_cart', 'initiate_checkout'] ? 'pending' :
+                           'success';
+
+      const icon = action.success === false ? '❌' :
+                   action.user_approved === false ? '🚫' :
+                   action.user_approved === true ? '✅' : '🔧';
+
+      const inputSummary = action.input ? truncate(JSON.stringify(action.input), 80) : '—';
+      const outputSummary = action.output ? truncate(JSON.stringify(action.output), 80) : '—';
+
+      const approvalBadge = action.user_approved === true ? '<span class="status-badge paid">Approved</span>' :
+                             action.user_approved === false ? '<span class="status-badge failed">Declined</span>' :
+                             '<span class="status-badge created">Auto</span>';
+
+      return `
+        <div class="action-item ${statusClass}">
+          <div class="action-icon">${icon}</div>
+          <div class="action-details">
+            <div class="action-tool">
+              ${action.tool_name || 'unknown'} ${approvalBadge}
+              <span class="action-time" style="float:right;">${formatDate(action.timestamp)}</span>
+            </div>
+            <div class="action-decision">${action.decision || '—'}</div>
+            <details style="margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);">
+              <summary>Input/Output</summary>
+              <div style="margin-top: 4px;">
+                <strong>Input:</strong> <code>${inputSummary}</code><br>
+                <strong>Output:</strong> <code>${outputSummary}</code>
+              </div>
+            </details>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Failed to load AI actions:', err);
+  }
+}
+
+// ── Load Orders Table ──────────────────────────
+
+async function loadOrders() {
+  try {
+    const res = await fetch('/api/dashboard/orders');
+    const data = await res.json();
+    const tbody = document.getElementById('orders-tbody');
+
+    if (!data.orders || data.orders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No orders yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.orders.map(order => {
+      const statusClass = order.status;
+      const aiLabel = order.ai_assisted ? '🤖 Yes' : '👤 No';
+      const upsellLabel = order.upsell_accepted === true ? '✅ ' + formatPrice(order.upsell_amount) :
+                           order.upsell_accepted === false ? '❌ Declined' : '—';
+
+      return `
+        <tr>
+          <td>#${order.id}</td>
+          <td title="${order.session_id}">${order.session_id.substring(0, 8)}…</td>
+          <td>${formatPrice(order.total)}</td>
+          <td>${aiLabel}</td>
+          <td>${upsellLabel}</td>
+          <td><span class="status-badge ${statusClass}">${order.status.toUpperCase()}</span></td>
+          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${order.failure_reason || '—'}</td>
+          <td>${formatDate(order.created_at)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    // Also populate failures panel
+    loadFailures(data.orders);
+  } catch (err) {
+    console.error('Failed to load orders:', err);
+  }
+}
+
+// ── Load Failures Panel ────────────────────────
+
+function loadFailures(orders) {
+  const container = document.getElementById('failures-list');
+  const failedOrders = orders.filter(o => o.status === 'failed');
+
+  if (failedOrders.length === 0) {
+    container.innerHTML = '<div class="cart-empty">No failures recorded — the system handles errors gracefully when they occur.</div>';
+    return;
+  }
+
+  container.innerHTML = failedOrders.map(order => `
+    <div class="failure-item">
+      <div class="failure-reason">
+        ⚠️ Order #${order.id} — ${order.failure_reason || 'Unknown failure'}
+      </div>
+      <div class="failure-meta">
+        Session: ${order.session_id.substring(0, 8)}… · 
+        Amount: ${formatPrice(order.total)} · 
+        ${formatDate(order.created_at)}
+        ${order.ai_assisted ? ' · 🤖 AI-Assisted' : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Initialize ─────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadSummary();
+  loadSessions();
+  loadAiActions();
+  loadOrders();
+
+  // Auto-refresh every 30 seconds
+  setInterval(() => {
+    loadSummary();
+    loadAiActions();
+    loadOrders();
+  }, 30000);
+});
