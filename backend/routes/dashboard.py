@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 
 from backend.database import get_db
 from backend.logging_middleware import get_session_actions
+from backend.auth import get_current_admin
 
 router = APIRouter(prefix='/api/dashboard', tags=['dashboard'])
 
@@ -39,7 +40,7 @@ def _serialize_row(row: dict) -> dict:
 # ── GET /api/dashboard/summary ──────────────────────────────────────────────
 
 @router.get('/summary')
-async def dashboard_summary(conn: asyncpg.Connection = Depends(get_db)):
+async def dashboard_summary(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
     """Business impact metrics.
 
     Aggregates data from the ``orders`` and ``ai_actions`` tables to
@@ -113,6 +114,7 @@ async def dashboard_ai_actions(
     session_id: str | None = Query(None, description="Filter by session ID"),
     limit: int = Query(100, ge=1, le=500, description="Max rows to return"),
     conn: asyncpg.Connection = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
 ):
     """AI Decision Trace.
 
@@ -144,7 +146,7 @@ async def dashboard_ai_actions(
 # ── GET /api/dashboard/orders ──────────────────────────────────────────────
 
 @router.get('/orders')
-async def dashboard_orders(conn: asyncpg.Connection = Depends(get_db)):
+async def dashboard_orders(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
     """All orders with status info.
 
     Joins the ``orders`` table with ``products`` to include the product
@@ -180,7 +182,7 @@ async def dashboard_orders(conn: asyncpg.Connection = Depends(get_db)):
 # ── GET /api/dashboard/sessions ────────────────────────────────────────────
 
 @router.get('/sessions')
-async def dashboard_sessions(conn: asyncpg.Connection = Depends(get_db)):
+async def dashboard_sessions(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
     """List unique shopping sessions.
 
     Aggregates ``ai_actions`` by ``session_id`` to show the action count

@@ -158,3 +158,163 @@ current status.
 
 **Status:** Ready for testing
 **Notes:** All backend and frontend files created. Requires database seed and manual testing with Supabase, Gemini, and Razorpay test keys configured in .env.
+
+---
+
+## Audit & Enhancement Pass — Stage A (Critical): Populate upsell/attribution fields
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `backend/tools.py` — `initiate_checkout` now populates `upsell_accepted`, `upsell_amount`, `ai_recommended_product_id` on the order row by inspecting cart items' `source` field
+- `backend/routes/checkout.py` — `verify_payment` now sets `actual_product_purchased_id` from cart items on successful payment, and logs successful payment to `ai_actions`
+
+**What changed:** The `orders` table columns `upsell_accepted`, `upsell_amount`, `ai_recommended_product_id`, and `actual_product_purchased_id` were defined in schema but never written to. Now they are populated at order creation (checkout) and payment verification respectively. Dashboard `/api/dashboard/summary` upsell metrics will now show real data.
+
+**Status:** Complete
+
+---
+
+## Audit & Enhancement Pass — Stage B (Critical): Fix order data leak
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `backend/models.py` — Added `tool_result: Optional[dict]` to `ChatResponse`
+- `backend/agent_loop.py` — Added `tool_result` field to `AgentResponse` dataclass; `execute_confirmed_action` now threads the confirmed tool's result through all return paths
+- `backend/routes/chat.py` — `_to_chat_response` now includes `tool_result` in the response
+- `frontend/js/checkout.js` — `handleCheckoutConfirmed` rewritten to read `order_id` from `tool_result` instead of fetching `GET /api/dashboard/orders`
+- `frontend/js/chat.js` — `handleConfirm` passes `data.tool_result` to `handleCheckoutConfirmed`
+
+**What changed:** Previously, `checkout.js` called `GET /api/dashboard/orders` (which returns ALL orders for ALL sessions, unauthenticated) to find the current session's order. Now the `order_id` flows directly from the confirmed `initiate_checkout` tool result through the API response. The global orders endpoint is no longer called from the customer-facing flow.
+
+**Status:** Complete
+
+---
+
+## Audit & Enhancement Pass — Stage C (Important): Decrement stock on payment
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `backend/routes/checkout.py` — `verify_payment` now decrements `products.stock` for each cart item after successful payment verification, guarded by `stock >= quantity` to prevent negative stock. If insufficient stock at payment time, the order is marked `failed` with `failure_reason = 'insufficient_stock_at_payment'` and logged to `ai_actions`.
+
+**What changed:** Stock was checked at add-to-cart time but never decremented anywhere. Now stock is decremented in `verify_payment` (the single source of truth — the webhook handler does NOT decrement, to avoid double-decrement). Includes graceful failure handling for race conditions.
+
+**Status:** Complete
+
+---
+
+## Audit & Enhancement Pass — Stage D (Important): Fix CORS misconfiguration
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `backend/main.py` — Changed `allow_credentials=True` to `allow_credentials=False`
+
+**What changed:** `allow_origins=["*"]` + `allow_credentials=True` is invalid per the CORS specification (browsers reject it). Changed to `allow_credentials=False` since the app doesn't use cookies — session_id is passed in request bodies.
+
+**Status:** Complete
+
+---
+
+## Audit & Enhancement Pass — Stage E (Important): Validate order ownership
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `backend/routes/checkout.py` — `POST /api/create-order` now requires `session_id` in the request body and validates it against the order's `session_id` column. Returns 403 on mismatch.
+- `frontend/js/checkout.js` — `openRazorpayCheckout` now includes `session_id` in the create-order request
+
+**What changed:** Previously, `POST /api/create-order` accepted a bare `order_id` with no ownership check, allowing any request to create a Razorpay order against any internal order. Now session ownership is validated.
+
+**Status:** Complete
+
+---
+
+## Audit & Enhancement Pass — Stage F (Polish): Demo-ability & dashboard clarity
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/main.py` — `POST /api/admin/simulate-stockout` and `POST /api/admin/restore-stock` dev/demo-only endpoints
+
+**Modified:**
+- `frontend/js/dashboard.js` — AI Decision Trace `decision` field is now visually prominent (larger font, accent background, border-left highlight, 💡 icon prefix) instead of plain text
+- `README.md` — Added "How Each Judging Criterion Is Met" table at the top with criterion → how it's met → where to look
+
+**Status:** Complete
+
+---
+
+## Audit & Enhancement Pass — Stage G (UX): Direct Upsells & Numbered References
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `backend/agent_loop.py` — Updated `SYSTEM_PROMPT` to add Rules 10 and 11.
+
+**What changed:** 
+1. The AI is now instructed to explicitly map numbered references (e.g., "add number 3") to the correct `product_id` from its previous list.
+2. After adding a product to the cart, the AI automatically calls `get_complementary_products` and directly suggests them, rather than passively asking the user "what else do you want to add". This creates a smoother, more proactive shopping experience.
+
+**Status:** Complete
+
+---
+
+## Stage G — Merchant/Admin Authentication (Email + Password + Signup Code)
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/auth.py` — Bcrypt password hashing (`bcrypt`), JWT token generation/validation (`python-jose`), and `get_current_admin` FastAPI dependency.
+- `backend/routes/admin_auth.py` — `POST /api/admin/signup` (gated by `ADMIN_SIGNUP_CODE`, bcrypt hashing, duplicate email 409 handling), `POST /api/admin/login` (generic error 401 handling, JWT issue), and `GET /api/admin/me` (token verification).
+- `frontend/js/dashboard-auth.js` — Client-side auth controller with `sessionStorage` token management, `authFetch` wrapper with automatic 401 interception, and login/signup UI toggling.
+
+**Modified:**
+- `backend/schema.sql` — Added `admin_users (id, email UNIQUE, password_hash, created_at)` table.
+- `backend/routes/dashboard.py` — Protected all `/api/dashboard/*` endpoints (`summary`, `ai-actions`, `orders`, `sessions`) using `Depends(get_current_admin)`. Returns 401 if token is missing/invalid.
+- `backend/main.py` — Registered `admin_auth_router`.
+- `frontend/dashboard.html` — Added login & signup forms, auth card view, admin email badge, and logout button.
+- `frontend/js/dashboard.js` — Converted all API calls to use `authFetch` with Bearer tokens; exposed `initDashboard()` initialization callback.
+- `requirements.txt` & `.env.example` — Added `passlib[bcrypt]`, `python-jose[cryptography]`, `JWT_SECRET`, `ADMIN_SIGNUP_CODE`.
+
+**Status:** Complete & Verified
+
+---
+
+## Stage H — Lightweight Customer Cart Recovery via Email/Phone (No Customer Passwords)
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/routes/session.py` — `POST /api/session/identify` (upserts customer identity tied to session) and `POST /api/session/recover` (retrieves session_id by email or phone).
+
+**Modified:**
+- `backend/schema.sql` — Added `customer_identities (id, session_id, email UNIQUE, phone UNIQUE, name, updated_at)` table.
+- `backend/main.py` — Registered `session_router`.
+- `frontend/js/checkout.js` — Removed hardcoded mock prefill (`Test Customer`); added customer details modal to capture real name, email, and phone before payment; calls `/api/session/identify` to persist identity and prefills Razorpay Checkout with customer data.
+- `frontend/js/chat.js` — Added "Recover Cart" modal integration; allows restoring a previous session's cart across devices/browsers via `/api/session/recover` and syncing `localStorage`.
+- `frontend/index.html` — Added Checkout Information modal, Cart Recovery modal, and sidebar "🔄 Recover" link.
+- `frontend/css/styles.css` — Added modal overlay, card, and action styling.
+
+**Status:** Complete & Verified
+
+---
+
+## Stage I — Remove Cart Item & Empty Cart (AI Tool + Direct UI)
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/tools.py` — Added `remove_from_cart(conn, session_id, product_id)` and `clear_cart(conn, session_id)` tool functions.
+- `backend/tool_definitions.py` — Added neutral JSON tool schemas for `remove_from_cart` and `clear_cart` (excluded from confirmation gate).
+
+**Modified:**
+- `backend/agent_loop.py` — Added Rule 12 to `SYSTEM_PROMPT` for conversational cart removals and clear requests.
+- `backend/routes/cart.py` — Added `DELETE /api/cart/item` and `DELETE /api/cart` endpoints with `agent_name='user_direct'` audit logging to `ai_actions`.
+- `frontend/js/chat.js` — Added `removeCartItem(productId)` with row-level `×` buttons, and `clearCart()` with native `confirm()` dialog.
+- `frontend/index.html` & `frontend/css/styles.css` — Added `🗑️ Empty Cart` button and styling.
+
+**Status:** Complete & Verified
+

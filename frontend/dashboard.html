@@ -7,6 +7,124 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/styles.css">
+  <style>
+    /* Auth Modal & Form styles */
+    .auth-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 80vh;
+      padding: 24px;
+    }
+    .auth-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+      width: 100%;
+      max-width: 420px;
+      padding: 32px;
+    }
+    .auth-card h2 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .auth-card p.subtitle {
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      margin-bottom: 24px;
+    }
+    .auth-form .form-group {
+      margin-bottom: 16px;
+    }
+    .auth-form label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    .auth-form input {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 0.95rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .auth-form input:focus {
+      border-color: var(--primary);
+    }
+    .auth-btn {
+      width: 100%;
+      padding: 12px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.2s;
+    }
+    .auth-btn:hover {
+      background: var(--primary-dark);
+    }
+    .auth-toggle-link {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .auth-toggle-link a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .auth-toggle-link a:hover {
+      text-decoration: underline;
+    }
+    .auth-msg {
+      margin-top: 14px;
+      font-size: 0.85rem;
+      text-align: center;
+      min-height: 20px;
+    }
+    .admin-badge {
+      font-size: 0.8rem;
+      background: rgba(59, 130, 246, 0.1);
+      color: var(--primary);
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn-logout {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--danger);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-logout:hover {
+      background: rgba(239, 68, 68, 0.08);
+      border-color: var(--danger);
+    }
+  </style>
 </head>
 <body>
   <div class="dashboard-container">
@@ -14,92 +132,151 @@
     <div class="dashboard-header">
       <h1>📊 ShopMind AI — Merchant Dashboard</h1>
       <div class="header-actions">
+        <div id="admin-user-section" style="display: none; align-items: center; gap: 10px;">
+          <span class="admin-badge">👤 <span id="admin-email-badge">Admin</span></span>
+          <button class="btn-logout" onclick="handleLogout()">Logout</button>
+        </div>
         <a href="/">💬 Chat UI</a>
       </div>
     </div>
 
-    <!-- ── Business Impact Metrics ─────────── -->
-    <div class="metrics-grid" id="metrics-grid">
-      <div class="metric-card">
-        <div class="label">Total Revenue</div>
-        <div class="value success" id="m-revenue">₹0</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">Total Orders</div>
-        <div class="value" id="m-orders">0</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">AI-Assisted %</div>
-        <div class="value primary" id="m-ai-pct">0%</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">Avg Order Value</div>
-        <div class="value" id="m-aov">₹0</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">AI Revenue</div>
-        <div class="value primary" id="m-ai-revenue">₹0</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">Upsells Accepted</div>
-        <div class="value success" id="m-upsells">0</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">Upsell Revenue</div>
-        <div class="value success" id="m-upsell-rev">₹0</div>
-      </div>
-      <div class="metric-card">
-        <div class="label">Failed Orders</div>
-        <div class="value danger" id="m-failed">0</div>
+    <!-- ── Authentication Gate (Login / Signup) ── -->
+    <div class="auth-container" id="auth-container">
+      <div class="auth-card">
+        <!-- Login Form -->
+        <div id="login-form">
+          <h2>🔒 Merchant Login</h2>
+          <p class="subtitle">Enter your credentials to access business metrics and AI decision traces.</p>
+          <form class="auth-form" onsubmit="handleLogin(event)">
+            <div class="form-group">
+              <label for="login-email">Email Address</label>
+              <input type="email" id="login-email" required placeholder="merchant@shopmind.ai" autocomplete="email">
+            </div>
+            <div class="form-group">
+              <label for="login-password">Password</label>
+              <input type="password" id="login-password" required placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <button type="submit" class="auth-btn" id="login-submit-btn">Log In to Dashboard</button>
+          </form>
+          <div class="auth-toggle-link">
+            Need an admin account? <a onclick="toggleAuthMode('signup')">Sign up with code</a>
+          </div>
+        </div>
+
+        <!-- Signup Form -->
+        <div id="signup-form" style="display: none;">
+          <h2>📝 Merchant Signup</h2>
+          <p class="subtitle">Create an admin account using your merchant signup authorization code.</p>
+          <form class="auth-form" onsubmit="handleSignup(event)">
+            <div class="form-group">
+              <label for="signup-email">Email Address</label>
+              <input type="email" id="signup-email" required placeholder="admin@shopmind.ai" autocomplete="email">
+            </div>
+            <div class="form-group">
+              <label for="signup-password">Password (min 8 chars)</label>
+              <input type="password" id="signup-password" required minlength="8" placeholder="At least 8 characters" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label for="signup-code">Merchant Signup Code</label>
+              <input type="text" id="signup-code" required placeholder="Enter ADMIN_SIGNUP_CODE">
+            </div>
+            <button type="submit" class="auth-btn" id="signup-submit-btn">Create Admin Account</button>
+          </form>
+          <div class="auth-toggle-link">
+            Already have an account? <a onclick="toggleAuthMode('login')">Log in</a>
+          </div>
+        </div>
+
+        <div class="auth-msg" id="auth-error-msg"></div>
       </div>
     </div>
 
-    <!-- ── AI Decision Trace ───────────────── -->
-    <div class="panel">
-      <div class="panel-header">
-        🧠 AI Decision Trace
-        <select class="session-select" id="session-select" onchange="loadAiActions()">
-          <option value="">All Sessions</option>
-        </select>
+    <!-- ── Protected Dashboard Content ─────── -->
+    <div id="dashboard-content" style="display: none;">
+      <!-- ── Business Impact Metrics ─────────── -->
+      <div class="metrics-grid" id="metrics-grid">
+        <div class="metric-card">
+          <div class="label">Total Revenue</div>
+          <div class="value success" id="m-revenue">₹0</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Total Orders</div>
+          <div class="value" id="m-orders">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">AI-Assisted %</div>
+          <div class="value primary" id="m-ai-pct">0%</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Avg Order Value</div>
+          <div class="value" id="m-aov">₹0</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">AI Revenue</div>
+          <div class="value primary" id="m-ai-revenue">₹0</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Upsells Accepted</div>
+          <div class="value success" id="m-upsells">0</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Upsell Revenue</div>
+          <div class="value success" id="m-upsell-rev">₹0</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Failed Orders</div>
+          <div class="value danger" id="m-failed">0</div>
+        </div>
       </div>
-      <div class="panel-body" id="ai-actions-list">
-        <div class="cart-empty">No AI actions recorded yet.</div>
-      </div>
-    </div>
 
-    <!-- ── Orders Table (AI vs Human) ──────── -->
-    <div class="panel">
-      <div class="panel-header">📋 Orders — AI vs Human Comparison</div>
-      <div class="panel-body" style="padding: 0; overflow-x: auto;">
-        <table class="orders-table" id="orders-table">
-          <thead>
-            <tr>
-              <th>Order ID</th>
-              <th>Session</th>
-              <th>Total</th>
-              <th>AI Assisted</th>
-              <th>Upsell</th>
-              <th>Status</th>
-              <th>Failure Reason</th>
-              <th>Date</th>
-            </tr>
-          </thead>
-          <tbody id="orders-tbody">
-            <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No orders yet.</td></tr>
-          </tbody>
-        </table>
+      <!-- ── AI Decision Trace ───────────────── -->
+      <div class="panel">
+        <div class="panel-header">
+          🧠 AI Decision Trace
+          <select class="session-select" id="session-select" onchange="loadAiActions()">
+            <option value="">All Sessions</option>
+          </select>
+        </div>
+        <div class="panel-body" id="ai-actions-list">
+          <div class="cart-empty">No AI actions recorded yet.</div>
+        </div>
       </div>
-    </div>
 
-    <!-- ── Failure Handling Section ─────────── -->
-    <div class="panel">
-      <div class="panel-header">⚠️ Handled Failures (Section 6 — Graceful Failure Proof)</div>
-      <div class="panel-body" id="failures-list">
-        <div class="cart-empty">No failures recorded — the system handles errors gracefully when they occur.</div>
+      <!-- ── Orders Table (AI vs Human) ──────── -->
+      <div class="panel">
+        <div class="panel-header">📋 Orders — AI vs Human Comparison</div>
+        <div class="panel-body" style="padding: 0; overflow-x: auto;">
+          <table class="orders-table" id="orders-table">
+            <thead>
+              <tr>
+                <th>Order ID</th>
+                <th>Session</th>
+                <th>Total</th>
+                <th>AI Assisted</th>
+                <th>Upsell</th>
+                <th>Status</th>
+                <th>Failure Reason</th>
+                <th>Date</th>
+              </tr>
+            </thead>
+            <tbody id="orders-tbody">
+              <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No orders yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Failure Handling Section ─────────── -->
+      <div class="panel">
+        <div class="panel-header">⚠️ Handled Failures (Section 6 — Graceful Failure Proof)</div>
+        <div class="panel-body" id="failures-list">
+          <div class="cart-empty">No failures recorded — the system handles errors gracefully when they occur.</div>
+        </div>
       </div>
     </div>
   </div>
 
+  <script src="/js/dashboard-auth.js"></script>
   <script src="/js/dashboard.js"></script>
 </body>
 </html>

@@ -1,53 +1,124 @@
 /**
- * checkout.js — Razorpay Checkout integration for ShopMind AI.
+ * checkout.js — Razorpay Checkout integration with Customer Identification.
  *
- * Handles creating Razorpay orders, opening the Checkout modal,
- * verifying payments, and reporting failures.
+ * Collects customer contact info, saves customer identity for cart recovery,
+ * creates Razorpay orders, opens the Checkout modal, and verifies payments.
  */
+
+const CUSTOMER_INFO_KEY = 'shopmind_customer_info';
+
+let pendingCheckoutOrderId = null;
+let pendingCheckoutTotal = null;
 
 /**
  * Called after the agent's initiate_checkout tool succeeds and user confirms.
- * Extracts the order_id from the agent response and triggers Razorpay Checkout.
  */
-async function handleCheckoutConfirmed(agentResponse) {
-  // The agent response content should mention the order details
-  // We need to get the latest order for this session
+async function handleCheckoutConfirmed(toolResult) {
   try {
-    const res = await fetch(`/api/cart?session_id=${sessionId}`);
-    const cart = await res.json();
+    const orderId = toolResult && toolResult.order_id;
+    const total = toolResult && toolResult.total;
 
-    // Find the latest order by querying orders
-    const ordersRes = await fetch('/api/dashboard/orders');
-    const ordersData = await ordersRes.json();
-
-    // Find the most recent 'created' order for our session
-    const myOrder = ordersData.orders.find(o =>
-      o.session_id === sessionId && o.status === 'created'
-    );
-
-    if (!myOrder) {
+    if (!orderId) {
       addMessage('agent', "I couldn't find your order. Let's try the checkout again.");
       return;
     }
 
-    lastOrderId = myOrder.id;
-    await openRazorpayCheckout(myOrder.id, myOrder.total);
+    lastOrderId = orderId;
+    pendingCheckoutOrderId = orderId;
+    pendingCheckoutTotal = total;
+
+    // Check if customer info is already known in this browser session
+    const savedInfoStr = sessionStorage.getItem(CUSTOMER_INFO_KEY);
+    if (savedInfoStr) {
+      try {
+        const savedInfo = JSON.parse(savedInfoStr);
+        if (savedInfo.name && (savedInfo.email || savedInfo.phone)) {
+          await proceedToRazorpay(savedInfo);
+          return;
+        }
+      } catch (e) {}
+    }
+
+    // Otherwise prompt for customer contact details
+    openCheckoutModal();
   } catch (err) {
     console.error('Checkout error:', err);
     addMessage('agent', "There was an issue preparing your payment. Please try again.");
   }
 }
 
+function openCheckoutModal() {
+  const modal = document.getElementById('checkout-modal');
+  const errorEl = document.getElementById('checkout-modal-error');
+  if (errorEl) errorEl.textContent = '';
+
+  const savedInfoStr = sessionStorage.getItem(CUSTOMER_INFO_KEY);
+  if (savedInfoStr) {
+    try {
+      const savedInfo = JSON.parse(savedInfoStr);
+      if (document.getElementById('cust-name')) document.getElementById('cust-name').value = savedInfo.name || '';
+      if (document.getElementById('cust-email')) document.getElementById('cust-email').value = savedInfo.email || '';
+      if (document.getElementById('cust-phone')) document.getElementById('cust-phone').value = savedInfo.phone || '';
+    } catch (e) {}
+  }
+
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeCheckoutModal() {
+  const modal = document.getElementById('checkout-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitCustomerDetails(e) {
+  if (e) e.preventDefault();
+  const name = document.getElementById('cust-name').value.trim();
+  const email = document.getElementById('cust-email').value.trim();
+  const phone = document.getElementById('cust-phone').value.trim();
+  const errorEl = document.getElementById('checkout-modal-error');
+  const btn = document.getElementById('cust-submit-btn');
+
+  if (!name || (!email && !phone)) {
+    if (errorEl) errorEl.textContent = 'Please provide your name and at least an email or phone.';
+    return;
+  }
+
+  const customerInfo = { name, email, phone };
+  sessionStorage.setItem(CUSTOMER_INFO_KEY, JSON.stringify(customerInfo));
+
+  closeCheckoutModal();
+  await proceedToRazorpay(customerInfo);
+}
+
 /**
- * Creates a Razorpay order and opens the Checkout modal.
+ * Saves customer identity to backend and launches Razorpay checkout modal.
  */
-async function openRazorpayCheckout(orderId, totalAmount) {
+async function proceedToRazorpay(customerInfo) {
+  const orderId = pendingCheckoutOrderId || lastOrderId;
+  const totalAmount = pendingCheckoutTotal;
+
+  // 1. Identify customer identity for cart recovery
   try {
-    // 1. Create Razorpay order on backend
+    await fetch('/api/session/identify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId,
+        name: customerInfo.name,
+        email: customerInfo.email,
+        phone: customerInfo.phone,
+      }),
+    });
+  } catch (err) {
+    console.warn('Could not save customer identity for recovery:', err);
+  }
+
+  // 2. Create Razorpay order on backend
+  try {
     const res = await fetch('/api/create-order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id: orderId }),
+      body: JSON.stringify({ order_id: orderId, session_id: sessionId }),
     });
 
     if (!res.ok) {
@@ -58,7 +129,7 @@ async function openRazorpayCheckout(orderId, totalAmount) {
 
     const orderData = await res.json();
 
-    // 2. Open Razorpay Checkout modal
+    // 3. Open Razorpay Checkout with actual customer details
     const options = {
       key: orderData.key_id,
       amount: orderData.amount,
@@ -67,13 +138,12 @@ async function openRazorpayCheckout(orderId, totalAmount) {
       description: 'Laptop Purchase',
       order_id: orderData.razorpay_order_id,
       handler: async function (response) {
-        // 3. Payment success callback — verify signature
         await verifyPayment(response, orderId);
       },
       prefill: {
-        name: 'Test Customer',
-        email: 'test@shopmind.ai',
-        contact: '9876543210',
+        name: customerInfo.name || '',
+        email: customerInfo.email || '',
+        contact: customerInfo.phone || '',
       },
       theme: {
         color: '#3b82f6',
@@ -87,7 +157,6 @@ async function openRazorpayCheckout(orderId, totalAmount) {
 
     const rzp = new Razorpay(options);
 
-    // 4. Payment failure handler
     rzp.on('payment.failed', async function (response) {
       await handlePaymentFailure(response, orderId);
     });
@@ -123,7 +192,6 @@ async function verifyPayment(razorpayResponse, orderId) {
         `**Payment ID:** ${razorpayResponse.razorpay_payment_id}\n\n` +
         "Thank you for shopping with ShopMind AI! Your items will be shipped soon. 🚀"
       );
-      // Clear cart display
       await refreshCart();
     } else {
       addMessage('agent',
@@ -140,12 +208,10 @@ async function verifyPayment(razorpayResponse, orderId) {
 
 /**
  * Handle payment failure from Razorpay Checkout.
- * This is the GRACEFUL FAILURE HANDLING required by Section 6.
  */
 async function handlePaymentFailure(response, orderId) {
   const error = response.error || {};
 
-  // Log the failure to backend
   try {
     await fetch('/api/payment-failed', {
       method: 'POST',
@@ -163,7 +229,6 @@ async function handlePaymentFailure(response, orderId) {
     console.error('Failed to log payment failure:', err);
   }
 
-  // Show a clear, human-friendly message — NOT a raw error
   addMessage('agent',
     "❌ **Payment didn't go through.**\n\n" +
     `**Reason:** ${error.description || 'The payment was declined or timed out.'}\n\n` +

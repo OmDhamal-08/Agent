@@ -77,3 +77,24 @@ CREATE TABLE IF NOT EXISTS co_purchase_history (
     co_purchase_count       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (product_id, complementary_product_id)
 );
+
+-- Admin/merchant users for dashboard authentication (Stage G)
+CREATE TABLE IF NOT EXISTS admin_users (
+    id              SERIAL PRIMARY KEY,
+    email           VARCHAR(255) UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Customer identities for cart recovery (Stage H)
+CREATE TABLE IF NOT EXISTS customer_identities (
+    id              SERIAL PRIMARY KEY,
+    session_id      VARCHAR(100) NOT NULL,
+    email           VARCHAR(255),
+    phone           VARCHAR(20),
+    name            VARCHAR(255),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_ci_email UNIQUE (email),
+    CONSTRAINT uq_ci_phone UNIQUE (phone),
+    CONSTRAINT chk_ci_contact CHECK (email IS NOT NULL OR phone IS NOT NULL)
+);

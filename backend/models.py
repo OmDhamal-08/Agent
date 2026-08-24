@@ -53,6 +53,7 @@ class ChatResponse(BaseModel):
     content: str
     pending_action: Optional[dict] = None  # {action_id, tool_name, tool_args, description}
     tool_calls_made: int = 0
+    tool_result: Optional[dict] = None  # Result from a confirmed tool execution
 
 
 class PaymentVerifyRequest(BaseModel):

@@ -69,6 +69,12 @@ CRITICAL RULES — follow these exactly:
 
 9. The session_id for this conversation is: {session_id}
    Always use this session_id when calling tools that require it.
+
+10. NUMBERED LISTS & REFERENCES: When suggesting or listing multiple products, ALWAYS number them clearly (e.g., 1. [Product A], 2. [Product B]). If the customer responds by saying "add number 2" or "I want the third one", YOU MUST correctly map their number to the exact `product_id` from your previous message's list before calling `add_to_cart`.
+
+11. AUTOMATIC UPSELLS: IMMEDIATELY after successfully adding a laptop or main product to the cart, DO NOT ask "what else do you want?". Instead, AUTOMATICALLY call `get_complementary_products` to find related items (like bags, mice, cooling pads), check if they already have them (Rule 3), and directly suggest adding them to the cart in the same response.
+
+12. CART REMOVAL & CLEAR: When a customer asks to remove an item from their cart, call remove_from_cart with the product_id. When they ask to clear or empty their entire cart, call clear_cart. These actions execute immediately without requiring confirmation.
 """
 
 
@@ -94,6 +100,7 @@ class AgentResponse:
     pending_action: Optional[PendingConfirmation] = None
     conversation_history: list = field(default_factory=list)
     tool_calls_made: int = 0
+    tool_result: Optional[dict] = None  # Result from a confirmed tool execution
 
 
 # ──────────────────────────────────────────────
@@ -329,6 +336,10 @@ async def execute_confirmed_action(
     result = await _execute_tool(conn, pending.tool_name, pending.tool_args)
     success = "error" not in result and result.get("success", True)
 
+    # Capture the confirmed tool's result so it can be forwarded to the frontend
+    # (e.g., order_id from initiate_checkout)
+    confirmed_result = {"tool_name": pending.tool_name, **result}
+
     # Update the existing log entry
     if pending.ai_action_log_id:
         await conn.execute(
@@ -371,6 +382,7 @@ async def execute_confirmed_action(
                 type="error",
                 content=f"Something went wrong processing your request. Error: {str(e)}",
                 conversation_history=conversation_history,
+                tool_result=confirmed_result,
             )
 
         if llm_response.candidate_content:
@@ -385,6 +397,7 @@ async def execute_confirmed_action(
                 type="text",
                 content=llm_response.text,
                 conversation_history=conversation_history,
+                tool_result=confirmed_result,
             )
 
         if not llm_response.tool_calls:
@@ -392,6 +405,7 @@ async def execute_confirmed_action(
                 type="text",
                 content="Done! Is there anything else I can help you with?",
                 conversation_history=conversation_history,
+                tool_result=confirmed_result,
             )
 
         # Process tool calls
@@ -430,6 +444,7 @@ async def execute_confirmed_action(
                         ai_action_log_id=ai_log_id,
                     ),
                     conversation_history=conversation_history,
+                    tool_result=confirmed_result,
                 )
 
             # Execute non-gated tool
@@ -463,6 +478,7 @@ async def execute_confirmed_action(
         type="text",
         content="All done! Let me know if you need anything else.",
         conversation_history=conversation_history,
+        tool_result=confirmed_result,
     )
 
 

@@ -7,6 +7,20 @@ genuine LLM agent loop (Gemini), backed by a real Postgres database, with
 Razorpay payment integration and a merchant dashboard showing what the agent
 actually did.
 
+## How Each Judging Criterion Is Met
+
+| Criterion | How It's Met | Where to Look |
+|---|---|---|
+| **Every money action explainable** | Every tool call (success, failure, confirmation) logged to `ai_actions` with `decision` text describing the agent's reasoning | Dashboard → AI Decision Trace panel |
+| **Bounded** | Agent loop capped at 6 tool calls per user turn — prevents runaway spending | `agent_loop.py` line 31: `MAX_TOOL_CALLS_PER_TURN = 6` |
+| **Gated** | `add_to_cart` and `initiate_checkout` require explicit Confirm/Cancel click before executing | Chat UI → inline Confirm/Cancel buttons |
+| **Audit trail** | Complete chronological log of every agent action with inputs, outputs, reasoning, and approval status | Dashboard → AI Decision Trace + Orders Table |
+| **Failure handled gracefully** | (A) Payment failure → clear message + retry options + logged to ai_actions. (B) Out-of-stock → agent explains and searches alternatives | Dashboard → Handled Failures panel |
+| **Growing merchant revenue** | AI recommendations and upsells tracked via `source` field → upsell metrics on dashboard | Dashboard → Business Impact (Upsell Revenue, AI-Assisted %) |
+| **Transactable by other AI agents** | `GET /api/agent-catalog` — machine-readable catalog with structured pricing, stock, specs, and HATEOAS links | http://localhost:8000/api/agent-catalog |
+
+> For detailed design rationale behind every component, see [EXPLANATION.md](EXPLANATION.md).
+
 ## Quick Start
 
 ### 1. Install dependencies
@@ -61,6 +75,7 @@ Customer ↔ Chat UI ↔ FastAPI ↔ Agent Loop ↔ Gemini LLM
 - **add_to_cart** and **initiate_checkout** require human confirmation
 - **Every tool call** logged to `ai_actions` table (audit trail)
 - **Payment failures** handled gracefully with user-friendly messages
+- **Stock decremented** on successful payment verification
 
 ## Key Files
 
@@ -70,7 +85,7 @@ Customer ↔ Chat UI ↔ FastAPI ↔ Agent Loop ↔ Gemini LLM
 | `backend/tools.py` | 7 tool functions that query Postgres |
 | `backend/adapters/gemini_adapter.py` | Gemini API adapter (swappable) |
 | `backend/routes/chat.py` | Chat API with confirmation gating |
-| `backend/routes/checkout.py` | Razorpay payment flow |
+| `backend/routes/checkout.py` | Razorpay payment flow + stock decrement |
 | `backend/routes/catalog.py` | Agent-readable catalog (GET /api/agent-catalog) |
 | `backend/routes/dashboard.py` | Merchant dashboard API |
 | `frontend/index.html` | Chat UI |

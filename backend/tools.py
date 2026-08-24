@@ -392,15 +392,32 @@ async def initiate_checkout(
         item["source"] in ai_sources for item in cart["items"]
     )
 
+    # ── Upsell attribution ──────────────────────────────────────
+    # Check for ai_upsell items to populate upsell metrics
+    upsell_items = [i for i in cart["items"] if i["source"] == "ai_upsell"]
+    upsell_accepted = len(upsell_items) > 0
+    upsell_amount = round(sum(i["subtotal"] for i in upsell_items), 2) if upsell_accepted else None
+
+    # Pick the first ai_recommendation-sourced item for the attribution column.
+    # Assumption: ai_recommended_product_id is single-valued; if there are
+    # multiple AI-recommended items we take the first one.
+    ai_rec_items = [i for i in cart["items"] if i["source"] == "ai_recommendation"]
+    ai_recommended_product_id = ai_rec_items[0]["product_id"] if ai_rec_items else None
+
     order_id = await conn.fetchval(
         """
-        INSERT INTO orders (session_id, total, ai_assisted, status)
-        VALUES ($1, $2, $3, 'created')
+        INSERT INTO orders
+            (session_id, total, ai_assisted, status,
+             upsell_accepted, upsell_amount, ai_recommended_product_id)
+        VALUES ($1, $2, $3, 'created', $4, $5, $6)
         RETURNING id
         """,
         session_id,
         cart["total"],
         ai_assisted,
+        upsell_accepted,
+        upsell_amount,
+        ai_recommended_product_id,
     )
 
     return {
@@ -409,6 +426,90 @@ async def initiate_checkout(
         "total": cart["total"],
         "item_count": cart["item_count"],
         "ai_assisted": ai_assisted,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 8. remove_from_cart
+# ---------------------------------------------------------------------------
+
+async def remove_from_cart(
+    conn: asyncpg.Connection,
+    session_id: str,
+    product_id: int,
+) -> Dict[str, Any]:
+    """Remove a specific product from the customer's cart.
+
+    Returns::
+
+        {"success": true, "removed": {"product_id": N, "product_name": str}}
+        or {"success": false, "reason": "not_in_cart", "product_id": N}
+    """
+    row = await conn.fetchrow(
+        """
+        DELETE FROM cart_items
+        WHERE id = (
+            SELECT ci.id FROM cart_items ci
+            WHERE ci.session_id = $1 AND ci.product_id = $2
+            LIMIT 1
+        )
+        RETURNING product_id
+        """,
+        session_id,
+        product_id,
+    )
+
+    if row is None:
+        return {
+            "success": False,
+            "reason": "not_in_cart",
+            "product_id": product_id,
+        }
+
+    # Fetch product name for friendly message
+    product_name = await conn.fetchval(
+        "SELECT name FROM products WHERE id = $1",
+        product_id,
+    )
+
+    return {
+        "success": True,
+        "removed": {
+            "product_id": product_id,
+            "product_name": product_name or f"Product #{product_id}",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# 9. clear_cart
+# ---------------------------------------------------------------------------
+
+async def clear_cart(
+    conn: asyncpg.Connection,
+    session_id: str,
+) -> Dict[str, Any]:
+    """Remove all items from the customer's shopping cart.
+
+    Returns::
+
+        {"success": true, "items_removed": N}
+    """
+    status = await conn.execute(
+        "DELETE FROM cart_items WHERE session_id = $1",
+        session_id,
+    )
+
+    # status is 'DELETE N'
+    count = 0
+    try:
+        count = int(status.split()[1])
+    except (IndexError, ValueError):
+        count = 0
+
+    return {
+        "success": True,
+        "items_removed": count,
     }
 
 
@@ -424,4 +525,7 @@ TOOL_DISPATCH: Dict[str, Any] = {
     "get_complementary_products": get_complementary_products,
     "check_customer_owns": check_customer_owns,
     "initiate_checkout": initiate_checkout,
+    "remove_from_cart": remove_from_cart,
+    "clear_cart": clear_cart,
 }
+

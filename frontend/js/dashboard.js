@@ -2,7 +2,8 @@
  * dashboard.js — Merchant dashboard data fetching and rendering.
  *
  * Loads business metrics, AI decision trace, orders table, and
- * failure handling details from the dashboard API endpoints.
+ * failure handling details from the protected dashboard API endpoints
+ * using authFetch.
  */
 
 function formatPrice(amount) {
@@ -28,7 +29,8 @@ function truncate(str, max = 60) {
 
 async function loadSummary() {
   try {
-    const res = await fetch('/api/dashboard/summary');
+    const res = await authFetch('/api/dashboard/summary');
+    if (!res.ok) return;
     const data = await res.json();
 
     document.getElementById('m-revenue').textContent = formatPrice(data.total_revenue);
@@ -48,9 +50,11 @@ async function loadSummary() {
 
 async function loadSessions() {
   try {
-    const res = await fetch('/api/dashboard/sessions');
+    const res = await authFetch('/api/dashboard/sessions');
+    if (!res.ok) return;
     const data = await res.json();
     const select = document.getElementById('session-select');
+    select.innerHTML = '<option value="">All Sessions</option>';
 
     data.sessions.forEach(s => {
       const opt = document.createElement('option');
@@ -72,7 +76,8 @@ async function loadAiActions() {
       ? `/api/dashboard/ai-actions?session_id=${sessionId}`
       : '/api/dashboard/ai-actions';
 
-    const res = await fetch(url);
+    const res = await authFetch(url);
+    if (!res.ok) return;
     const data = await res.json();
     const container = document.getElementById('ai-actions-list');
 
@@ -83,7 +88,7 @@ async function loadAiActions() {
 
     container.innerHTML = data.actions.map(action => {
       const statusClass = action.success === false ? 'failure' :
-                           action.user_approved === null && action.tool_name in ['add_to_cart', 'initiate_checkout'] ? 'pending' :
+                           action.user_approved === null && (action.tool_name === 'add_to_cart' || action.tool_name === 'initiate_checkout') ? 'pending' :
                            'success';
 
       const icon = action.success === false ? '❌' :
@@ -105,7 +110,9 @@ async function loadAiActions() {
               ${action.tool_name || 'unknown'} ${approvalBadge}
               <span class="action-time" style="float:right;">${formatDate(action.timestamp)}</span>
             </div>
-            <div class="action-decision">${action.decision || '—'}</div>
+            <div class="action-decision" style="font-size: 0.95rem; font-weight: 500; color: var(--text-primary, #1a1a2e); margin: 6px 0; padding: 6px 10px; background: rgba(99,102,241,0.06); border-left: 3px solid rgba(99,102,241,0.4); border-radius: 0 4px 4px 0;">
+              💡 ${action.decision || '—'}
+            </div>
             <details style="margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);">
               <summary>Input/Output</summary>
               <div style="margin-top: 4px;">
@@ -126,7 +133,8 @@ async function loadAiActions() {
 
 async function loadOrders() {
   try {
-    const res = await fetch('/api/dashboard/orders');
+    const res = await authFetch('/api/dashboard/orders');
+    if (!res.ok) return;
     const data = await res.json();
     const tbody = document.getElementById('orders-tbody');
 
@@ -188,18 +196,24 @@ function loadFailures(orders) {
   `).join('');
 }
 
-// ── Initialize ─────────────────────────────────
+// ── Global Dashboard Initializer ──────────────
 
-document.addEventListener('DOMContentLoaded', () => {
+let _refreshInterval = null;
+
+function initDashboard() {
   loadSummary();
   loadSessions();
   loadAiActions();
   loadOrders();
 
-  // Auto-refresh every 30 seconds
-  setInterval(() => {
-    loadSummary();
-    loadAiActions();
-    loadOrders();
+  if (_refreshInterval) clearInterval(_refreshInterval);
+  _refreshInterval = setInterval(() => {
+    // Only refresh if dashboard is currently visible
+    const token = sessionStorage.getItem('admin_token');
+    if (token) {
+      loadSummary();
+      loadAiActions();
+      loadOrders();
+    }
   }, 30000);
-});
+}

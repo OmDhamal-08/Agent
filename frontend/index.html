@@ -33,7 +33,13 @@
 
     <!-- ── Cart sidebar ────────────────────── -->
     <div class="cart-sidebar">
-      <div class="cart-header">🛒 Cart <span id="cart-count" style="color: var(--text-muted); font-weight: 400;">(0 items)</span></div>
+      <div class="cart-header">
+        <div class="cart-title">
+          <span>🛒 Cart</span>
+          <span id="cart-count" style="color: var(--text-muted); font-weight: 400; font-size: 0.85rem;">(0 items)</span>
+        </div>
+        <button class="btn-recover" onclick="openRecoverModal()" title="Restore cart from another device">🔄 Recover</button>
+      </div>
       <div class="cart-items" id="cart-items">
         <div class="cart-empty">Your cart is empty.<br>Ask the AI to recommend laptops!</div>
       </div>
@@ -43,7 +49,60 @@
           <span id="cart-total">₹0</span>
         </div>
         <button class="btn-checkout" id="checkout-btn" disabled onclick="requestCheckout()">Checkout</button>
+        <button class="btn-clear-cart" id="clear-cart-btn" style="display: none;" onclick="clearCart()">🗑️ Empty Cart</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── Customer Details Modal for Checkout ── -->
+  <div class="modal-overlay" id="checkout-modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>💳 Checkout Information</h3>
+        <button class="modal-close-btn" onclick="closeCheckoutModal()">✕</button>
+      </div>
+      <p class="modal-subtitle">Please provide your contact details for order confirmation and Razorpay receipt.</p>
+      <form class="modal-form" onsubmit="submitCustomerDetails(event)">
+        <div class="form-group">
+          <label for="cust-name">Full Name</label>
+          <input type="text" id="cust-name" required placeholder="Om Dhamal" autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label for="cust-email">Email Address</label>
+          <input type="email" id="cust-email" required placeholder="om@example.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="cust-phone">Phone Number</label>
+          <input type="tel" id="cust-phone" required placeholder="9876543210" autocomplete="tel">
+        </div>
+        <div class="modal-error" id="checkout-modal-error"></div>
+        <div class="modal-actions">
+          <button type="button" class="modal-btn-secondary" onclick="closeCheckoutModal()">Cancel</button>
+          <button type="submit" class="modal-btn-primary" id="cust-submit-btn">Proceed to Payment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Cart Recovery Modal ───────────────── -->
+  <div class="modal-overlay" id="recover-modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔄 Recover Saved Cart</h3>
+        <button class="modal-close-btn" onclick="closeRecoverModal()">✕</button>
+      </div>
+      <p class="modal-subtitle">Switched browsers or devices? Enter the email or phone number you used during checkout to restore your cart.</p>
+      <form class="modal-form" onsubmit="submitCartRecovery(event)">
+        <div class="form-group">
+          <label for="recover-contact">Email or Phone Number</label>
+          <input type="text" id="recover-contact" required placeholder="om@example.com or 9876543210">
+        </div>
+        <div class="modal-error" id="recover-modal-error"></div>
+        <div class="modal-actions">
+          <button type="button" class="modal-btn-secondary" onclick="closeRecoverModal()">Cancel</button>
+          <button type="submit" class="modal-btn-primary" id="recover-submit-btn">Restore My Cart</button>
+        </div>
+      </form>
     </div>
   </div>
 

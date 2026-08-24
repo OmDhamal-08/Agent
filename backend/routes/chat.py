@@ -87,6 +87,7 @@ def _to_chat_response(resp: AgentResponse) -> ChatResponse:
         content=resp.content,
         pending_action=pending_dict,
         tool_calls_made=resp.tool_calls_made,
+        tool_result=resp.tool_result,
     )
 
 

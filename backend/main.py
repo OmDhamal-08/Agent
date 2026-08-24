@@ -25,12 +25,12 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage the database connection pool lifecycle."""
-    print("🚀 Starting ShopMind AI...")
+    print("[ShopMind AI] Starting server...")
     pool = await create_pool()
-    print(f"✓ Database pool created (min=2, max=10)")
+    print(f"[ShopMind AI] Database pool created (min=2, max=10)")
     yield
     await close_pool()
-    print("✓ Database pool closed. Goodbye!")
+    print("[ShopMind AI] Database pool closed. Goodbye!")
 
 
 # ──────────────────────────────────────────────
@@ -48,7 +48,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Hackathon: allow all; production: restrict
-    allow_credentials=True,
+    allow_credentials=False,  # No cookies used; session_id is in request bodies
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -63,6 +63,8 @@ from backend.routes.checkout import router as checkout_router
 from backend.routes.webhook import router as webhook_router
 from backend.routes.catalog import router as catalog_router
 from backend.routes.dashboard import router as dashboard_router
+from backend.routes.admin_auth import router as admin_auth_router
+from backend.routes.session import router as session_router
 
 app.include_router(chat_router)
 app.include_router(cart_router)
@@ -70,6 +72,8 @@ app.include_router(checkout_router)
 app.include_router(webhook_router)
 app.include_router(catalog_router)
 app.include_router(dashboard_router)
+app.include_router(admin_auth_router)
+app.include_router(session_router)
 
 
 # ──────────────────────────────────────────────
@@ -80,6 +84,62 @@ app.include_router(dashboard_router)
 async def health_check():
     """Basic health check endpoint."""
     return {"status": "ok", "service": "shopmind-ai"}
+
+
+# ──────────────────────────────────────────────
+# Dev/Demo-only admin endpoints
+# ──────────────────────────────────────────────
+# ⚠️  These are NOT production-safe. They exist solely so that the
+#     Option B failure scenario (out-of-stock) can be triggered live
+#     during a hackathon demo without manual SQL.
+
+from fastapi import Depends
+from backend.database import get_db
+import asyncpg
+
+
+@app.post("/api/admin/simulate-stockout")
+async def simulate_stockout(
+    payload: dict,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """[DEV/DEMO ONLY] Set a product's stock to 0 to simulate out-of-stock."""
+    product_id = payload.get("product_id")
+    if product_id is None:
+        return {"error": "product_id is required"}
+
+    await conn.execute(
+        "UPDATE products SET stock = 0 WHERE id = $1",
+        product_id,
+    )
+    return {
+        "status": "ok",
+        "message": f"Product {product_id} stock set to 0 (simulated stockout)",
+        "warning": "DEV/DEMO ONLY — not for production use",
+    }
+
+
+@app.post("/api/admin/restore-stock")
+async def restore_stock(
+    payload: dict,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """[DEV/DEMO ONLY] Restore a product's stock to a given quantity."""
+    product_id = payload.get("product_id")
+    stock = payload.get("stock", 10)
+    if product_id is None:
+        return {"error": "product_id is required"}
+
+    await conn.execute(
+        "UPDATE products SET stock = $1 WHERE id = $2",
+        stock,
+        product_id,
+    )
+    return {
+        "status": "ok",
+        "message": f"Product {product_id} stock restored to {stock}",
+        "warning": "DEV/DEMO ONLY — not for production use",
+    }
 
 
 # ──────────────────────────────────────────────

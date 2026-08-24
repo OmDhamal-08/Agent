@@ -195,6 +195,44 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     },
+    # 8. remove_from_cart
+    {
+        "name": "remove_from_cart",
+        "description": (
+            "Remove a specific product from the customer's shopping cart."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Active shopping session identifier.",
+                },
+                "product_id": {
+                    "type": "integer",
+                    "description": "ID of the product to remove from the cart.",
+                },
+            },
+            "required": ["session_id", "product_id"],
+        },
+    },
+    # 9. clear_cart
+    {
+        "name": "clear_cart",
+        "description": (
+            "Remove all items from the customer's shopping cart, emptying it completely."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Active shopping session identifier.",
+                },
+            },
+            "required": ["session_id"],
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------

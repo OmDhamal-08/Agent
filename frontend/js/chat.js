@@ -2,7 +2,7 @@
  * chat.js — ShopMind AI chat interface logic.
  *
  * Manages conversation state, sends messages to the backend agent,
- * handles confirmation/cancel flows, and keeps the cart sidebar updated.
+ * handles confirmation/cancel flows, customer cart recovery, and cart management.
  */
 
 // ── Session management ─────────────────────────
@@ -17,7 +17,12 @@ function getSessionId() {
   return id;
 }
 
-const sessionId = getSessionId();
+let sessionId = getSessionId();
+
+function setSessionId(newId) {
+  sessionId = newId;
+  localStorage.setItem(SESSION_KEY, newId);
+}
 
 // ── State ──────────────────────────────────────
 let isWaiting = false;
@@ -144,7 +149,6 @@ async function sendMessage() {
       addMessage('agent', data.content);
     }
 
-    // Refresh cart after any interaction
     await refreshCart();
   } catch (err) {
     removeTypingIndicator();
@@ -158,7 +162,6 @@ async function sendMessage() {
 }
 
 async function handleConfirm(actionId) {
-  // Remove the confirm/cancel buttons
   const actionsEl = document.getElementById('confirm-actions');
   if (actionsEl) actionsEl.remove();
 
@@ -182,10 +185,8 @@ async function handleConfirm(actionId) {
     } else {
       addMessage('agent', data.content);
 
-      // Check if this was a checkout confirmation — trigger Razorpay
       if (pendingAction && pendingAction.tool_name === 'initiate_checkout') {
-        // Extract order_id from the response or pending action
-        await handleCheckoutConfirmed(data);
+        await handleCheckoutConfirmed(data.tool_result || data);
       }
       pendingAction = null;
     }
@@ -230,7 +231,7 @@ async function handleCancel(actionId) {
   }
 }
 
-// ── Cart management ────────────────────────────
+// ── Cart management & direct actions ───────────
 
 async function refreshCart() {
   try {
@@ -241,18 +242,21 @@ async function refreshCart() {
     const cartCountEl = document.getElementById('cart-count');
     const cartTotalEl = document.getElementById('cart-total');
     const checkoutBtn = document.getElementById('checkout-btn');
+    const clearCartBtn = document.getElementById('clear-cart-btn');
 
     if (!data.items || data.items.length === 0) {
       cartItemsEl.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Ask the AI to recommend laptops!</div>';
       cartCountEl.textContent = '(0 items)';
       cartTotalEl.textContent = '₹0';
-      checkoutBtn.disabled = true;
+      if (checkoutBtn) checkoutBtn.disabled = true;
+      if (clearCartBtn) clearCartBtn.style.display = 'none';
       return;
     }
 
     cartCountEl.textContent = `(${data.item_count} item${data.item_count > 1 ? 's' : ''})`;
     cartTotalEl.textContent = formatPrice(data.total);
-    checkoutBtn.disabled = false;
+    if (checkoutBtn) checkoutBtn.disabled = false;
+    if (clearCartBtn) clearCartBtn.style.display = 'block';
 
     cartItemsEl.innerHTML = data.items.map(item => {
       let sourceClass = 'organic';
@@ -262,13 +266,16 @@ async function refreshCart() {
 
       return `
         <div class="cart-item">
-          <div>
+          <div style="flex: 1; min-width: 0;">
             <div class="cart-item-name">${item.product_name}</div>
             <div class="cart-item-meta">
               Qty: ${item.quantity} · <span class="source-badge ${sourceClass}">${sourceLabel}</span>
             </div>
           </div>
-          <div class="cart-item-price">${formatPrice(item.subtotal)}</div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="cart-item-price">${formatPrice(item.subtotal)}</div>
+            <button class="cart-remove-btn" onclick="removeCartItem(${item.product_id})" title="Remove item">✕</button>
+          </div>
         </div>
       `;
     }).join('');
@@ -277,10 +284,114 @@ async function refreshCart() {
   }
 }
 
+async function removeCartItem(productId) {
+  try {
+    const res = await fetch('/api/cart/item', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, product_id: productId }),
+    });
+
+    if (res.ok) {
+      await refreshCart();
+    }
+  } catch (err) {
+    console.error('Error removing item from cart:', err);
+  }
+}
+
+async function clearCart() {
+  if (!confirm('Remove all items from your cart?')) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/cart', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+
+    if (res.ok) {
+      await refreshCart();
+    }
+  } catch (err) {
+    console.error('Error clearing cart:', err);
+  }
+}
+
 function requestCheckout() {
-  // Send a message asking to checkout — the agent will call initiate_checkout
   inputEl.value = "I'd like to checkout and pay now.";
   sendMessage();
+}
+
+// ── Cart Recovery Modals ───────────────────────
+
+function openRecoverModal() {
+  const modal = document.getElementById('recover-modal');
+  const errorEl = document.getElementById('recover-modal-error');
+  if (errorEl) errorEl.textContent = '';
+  if (document.getElementById('recover-contact')) document.getElementById('recover-contact').value = '';
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeRecoverModal() {
+  const modal = document.getElementById('recover-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitCartRecovery(e) {
+  if (e) e.preventDefault();
+  const contact = document.getElementById('recover-contact').value.trim();
+  const errorEl = document.getElementById('recover-modal-error');
+  const btn = document.getElementById('recover-submit-btn');
+
+  if (!contact) {
+    if (errorEl) errorEl.textContent = 'Please enter your email or phone number.';
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (errorEl) {
+    errorEl.style.color = 'var(--text-muted)';
+    errorEl.textContent = 'Looking for your saved cart...';
+  }
+
+  const isEmail = contact.includes('@');
+  const payload = isEmail ? { email: contact } : { phone: contact };
+
+  try {
+    const res = await fetch('/api/session/recover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (errorEl) {
+        errorEl.style.color = 'var(--danger)';
+        errorEl.textContent = data.detail || 'No saved cart found for that contact.';
+      }
+      return;
+    }
+
+    // Recovered! Update active session_id
+    setSessionId(data.session_id);
+    closeRecoverModal();
+    await refreshCart();
+
+    addMessage('agent', `🎉 Welcome back${data.name ? ' **' + data.name + '**' : ''}! I have restored your saved shopping cart from your previous session.`);
+  } catch (err) {
+    if (errorEl) {
+      errorEl.style.color = 'var(--danger)';
+      errorEl.textContent = 'Connection error. Please try again.';
+    }
+    console.error('Recovery error:', err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Keyboard shortcut ──────────────────────────

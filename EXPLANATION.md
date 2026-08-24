@@ -373,6 +373,229 @@ all sessions combined.
 | "Bounded" | 6-call cap per turn in agent_loop.py |
 | "Gated" | Confirmation gate on add_to_cart and initiate_checkout |
 | "Show the audit trail" | Dashboard AI Decision Trace + orders table |
-| "One failure handled gracefully" | Payment failure (Option A) + Stock failure (Option B) |
-| "Growing merchant revenue via agent" | Dashboard Business Impact panel, source attribution on cart items |
+| "One failure handled gracefully" | Payment failure (Option A) + Stock failure (Option B) + Stock-at-payment failure (Option C) |
+| "Growing merchant revenue via agent" | Dashboard Business Impact panel, source attribution on cart items, upsell metrics now populated |
 | "Transactable by other AI agents" | GET /api/agent-catalog endpoint |
+
+---
+
+## Audit & Enhancement Pass (2026-08-24)
+
+### Stage A — Populate upsell/attribution fields on orders
+
+**What was wrong:** The `orders` table had columns `upsell_accepted`,
+`upsell_amount`, `ai_recommended_product_id`, and
+`actual_product_purchased_id` defined in `schema.sql` and queried by
+`/api/dashboard/summary`, but `initiate_checkout` only wrote
+`session_id, total, ai_assisted, status`. The Business Impact panel
+always showed zero upsell revenue.
+
+**Why it mattered:** The upsell metrics are a core part of the "growing
+merchant revenue" judging criterion. Without them, the dashboard couldn't
+demonstrate that the AI actually drove upsell revenue.
+
+**What changed:**
+- `initiate_checkout` now inspects `cart_items` by `source` field:
+  items with `source='ai_upsell'` → `upsell_accepted=true`,
+  `upsell_amount` = sum of those items' subtotals. Items with
+  `source='ai_recommendation'` → first one's `product_id` set as
+  `ai_recommended_product_id`.
+- `verify_payment` now sets `actual_product_purchased_id` from the cart
+  items at payment time (preferring `ai_recommendation`-sourced items).
+- `verify_payment` success now also logged to `ai_actions` for audit
+  completeness (previously only failures were logged).
+
+**Assumption:** `ai_recommended_product_id` and `actual_product_purchased_id`
+are single-valued columns in the schema. When there are multiple matching
+cart items, we pick the first one (ordered by `ai_recommendation` source
+first, then `created_at`). A production system would use a junction table
+for multi-product orders.
+
+---
+
+### Stage B — Stop leaking all customers' orders to the client
+
+**What was wrong:** `checkout.js`'s `handleCheckoutConfirmed()` called
+`GET /api/dashboard/orders` — an unauthenticated endpoint returning every
+order for every session — just to find the current session's new order.
+
+**Why it mattered:** Any customer's browser could see every other
+customer's session_id, order total, and status. This is a data leak that
+would be a serious vulnerability in production and could lose marks under
+the "bounded" criterion.
+
+**What changed:**
+- Added `tool_result: Optional[dict]` to `AgentResponse` and
+  `ChatResponse` so the confirmed tool's output (including `order_id`)
+  flows directly through the API response.
+- `execute_confirmed_action` now captures the tool result and threads
+  it through every return path.
+- `checkout.js` reads `order_id` and `total` from the `tool_result`
+  field directly — no network call to `/api/dashboard/orders`.
+- `/api/dashboard/orders` remains available for the merchant dashboard
+  (it's only the customer-facing flow that no longer calls it).
+
+---
+
+### Stage C — Decrement stock on successful payment
+
+**What was wrong:** `add_to_cart` checked stock but never decremented it.
+Neither `verify_payment` nor the webhook `order.paid` handler decremented
+stock. Catalog stock numbers never reflected real sales.
+
+**Why it mattered:** Without stock decrement, the catalog would show
+infinite availability and the out-of-stock failure scenario would never
+trigger organically. This undermines the "bounded" and "failure handling"
+criteria.
+
+**What changed:** `verify_payment` now decrements `products.stock` for
+each cart item after successful signature verification, using
+`UPDATE ... SET stock = stock - $1 WHERE id = $2 AND stock >= $1`.
+
+**Design choice:** Stock decrement happens in `verify_payment` (the
+client-facing endpoint), NOT in the webhook `order.paid` handler. This
+avoids double-decrement on the same order when both the client callback
+and the webhook fire. The webhook handler only updates order status as a
+fallback.
+
+**Edge case:** If a race condition causes insufficient stock at payment
+time (stock was available when added to cart, but was purchased by another
+session between then and payment), the order is marked `failed` with
+`failure_reason='insufficient_stock_at_payment'` and logged to
+`ai_actions`. This is a third failure scenario on top of Options A and B.
+
+---
+
+### Stage D — Fix CORS credentials misconfiguration
+
+**What was wrong:** `main.py` set `allow_origins=["*"]` together with
+`allow_credentials=True`. Per the CORS specification, this combination is
+invalid — browsers will reject it (they require a specific origin, not
+wildcard, when credentials are enabled).
+
+**Why it mattered:** In practice this meant cross-origin requests with
+credentials would fail in compliant browsers. Since the app doesn't
+actually use cookies (session_id is passed in request bodies), the
+`allow_credentials=True` was unnecessary.
+
+**What changed:** Set `allow_credentials=False`. No functional impact
+since session_id was never passed via cookies.
+
+---
+
+### Stage E — Validate order ownership on payment creation
+
+**What was wrong:** `POST /api/create-order` accepted a bare `order_id`
+without any check that it belonged to the requesting session. Any request
+could create a Razorpay order against any internal order.
+
+**Why it mattered:** This violates the "bounded" criterion — actions
+should be scoped to the session that created them.
+
+**What changed:** The endpoint now requires `session_id` in the request
+body and queries `orders WHERE id = $1` then checks
+`row["session_id"] != session_id` → returns 403. The frontend's
+`openRazorpayCheckout` now includes `session_id: sessionId` in the
+request body.
+
+---
+
+### Stage F — Demo-ability and dashboard clarity
+
+**What was wrong (1):** The Option B failure scenario (out-of-stock)
+required manual SQL to trigger during a demo. **Fix:** Added
+`POST /api/admin/simulate-stockout` and `POST /api/admin/restore-stock`
+endpoints, clearly gated as dev/demo-only in code and docs. NOT for
+production use.
+
+**What was wrong (2):** The `decision` field in the AI Decision Trace
+panel was rendered in plain small text, not standing out from the
+Input/Output details. Since this field is the project's strongest
+evidence for the "explainable" judging criterion, it should be visually
+prominent. **Fix:** Styled the decision text with larger font, semi-bold
+weight, accent background highlight, and a left border, plus a 💡 icon
+prefix.
+
+**What was wrong (3):** The "how each judging criterion is met" narrative
+was only in EXPLANATION.md, which judges might not read. **Fix:** Added
+the same table to the top of README.md with a "Where to Look" column
+linking to specific UI locations.
+
+### Tradeoffs and remaining limitations
+
+- **In-memory session state** is still lost on server restart. Production
+  would use Redis.
+- **Stock decrement is not inside a DB transaction** spanning all cart
+  items — if item 2 fails after item 1 was decremented, item 1's stock
+  is not rolled back. For a hackathon demo this is acceptable; production
+  would use `BEGIN/COMMIT/ROLLBACK`.
+- **`actual_product_purchased_id`** is single-valued per order. Multi-item
+  orders only record the first (prioritizing AI-recommended) product.
+
+---
+
+## Stage G — Merchant/Admin Authentication Architecture
+
+### Problem Solved
+Previously, `/api/dashboard/*` endpoints (summary, ai-actions, orders, sessions) and the frontend dashboard were completely open. Anyone visiting `/dashboard.html` could see all customer orders, session IDs, and AI decision traces.
+
+### Design Decisions & Implementation
+
+1. **Bcrypt Password Hashing:**
+   Admin passwords are never stored or logged in plaintext. They are hashed using bcrypt with salted rounds via the standard `bcrypt` library. Minimum password length (8 characters) is enforced on signup.
+
+2. **Gated Signup (`ADMIN_SIGNUP_CODE`):**
+   Since ShopMind AI is a merchant-facing demo (not multi-tenant SaaS), self-registration is protected by a shared secret (`ADMIN_SIGNUP_CODE`). Requests with incorrect signup codes are rejected with `403 Forbidden`. Duplicate email attempts are caught and returned as `409 Conflict`.
+
+3. **Stateless JWT Tokens:**
+   On successful login, the server issues a signed JWT token containing the admin's email and a 24-hour expiration timestamp (`exp`). The token is signed using HMAC-SHA256 with `JWT_SECRET`.
+
+4. **Logout Mechanism:**
+   We chose a **stateless JWT with client-side discard** for logout. When an admin logs out, the client clears the token from `sessionStorage` and displays the login view. Because this is a single-tenant hackathon architecture with reasonable token expiry, a stateful server-side token revocation / blacklist database was intentionally omitted to avoid unnecessary overhead.
+
+5. **Separation of Concerns (Privileged vs Anonymous):**
+   - **Protected (Gated):** All `/api/dashboard/*` routes enforce the `get_current_admin` FastAPI dependency and return `401 Unauthorized` if the token is missing, expired, or tampered with.
+   - **Customer-Facing (Open):** Customer routes (`/api/chat`, `/api/cart`, `/api/create-order`, `/api/verify-payment`, `/api/agent-catalog`) remain completely anonymous without login requirements.
+   - **Demo Endpoints:** `/api/admin/simulate-stockout` and `/api/admin/restore-stock` are kept open for convenient live hackathon demonstrations.
+
+---
+
+## Stage H — Lightweight Customer Cart Recovery Architecture
+
+### Problem Solved
+Because anonymous shopping sessions are keyed by a UUID stored in browser `localStorage`, customers who switched devices or cleared storage lost access to their cart. We needed a lightweight way to restore carts across devices without forcing customers to create full accounts or remember passwords.
+
+### Design Decisions & Implementation
+
+1. **Reuse Checkout Prefill Information:**
+   Razorpay Checkout requires customer contact details (name, email, phone). Rather than creating a separate registration system, ShopMind AI captures these details at checkout time and stores them in `customer_identities (session_id, email, phone, name, updated_at)`.
+
+2. **Lightweight Recovery via `/api/session/recover`:**
+   A customer on a new device can click "🔄 Recover" in the cart sidebar, enter their email or phone number, and retrieve their previous `session_id`. The frontend seamlessly updates its active session and reloads the cart.
+
+> [!IMPORTANT]
+> **Convenience vs. Security Boundary:**
+> Cart recovery is intentionally designed as a **low-stakes convenience feature, NOT a secure identity verification system**. Anyone who knows a customer's email or phone number can recover their anonymous cart. In an e-commerce context, a shopping cart contains no payment information or private PII; real payment actions still require the Razorpay payment gateway with OTP/3D-Secure authentication. This tradeoff provides seamless UX without adding login friction.
+
+---
+
+## Stage I — Cart Item Removal & Empty Cart (Dual-Path Architecture)
+
+### Problem Solved
+Customers and the AI agent could previously only add items to the cart or view it. There was no mechanism to remove an unwanted item or clear the cart.
+
+### Design Decisions & Implementation
+
+1. **Dual-Path Capability:**
+   - **Conversational (AI-driven):** The agent has access to `remove_from_cart(session_id, product_id)` and `clear_cart(session_id)` tools. When a customer says *"remove the mouse"* or *"empty my cart"*, the LLM invokes the respective tool, reasons over the result, and responds naturally.
+   - **Direct UI (Manual):** Each item in the cart sidebar features a `×` remove button, and a `🗑️ Empty Cart` button is available at the bottom. These call `DELETE /api/cart/item` and `DELETE /api/cart` directly, bypassing LLM roundtrips for speed.
+
+2. **Confirmation Gate Policy:**
+   Per the original project specification, confirmation gates are strictly reserved for **money-adjacent and cart-growing actions** (`add_to_cart`, `initiate_checkout`). Removing an item or clearing the cart reduces liability and does not trigger the confirmation gate modal; it executes immediately.
+
+3. **Audit Trail Integrity (`user_direct` vs `shopmind_v1`):**
+   To keep the audit trail accurate for judges, direct UI actions are still logged to `ai_actions`, but with `agent_name = 'user_direct'` and `decision = 'Direct UI action — no AI reasoning involved'`. This allows the merchant dashboard to distinguish between actions taken autonomously by the AI and manual clicks by the customer.
+
+4. **UX Safeguard for Destructive Actions:**
+   For `clear_cart` from the UI, a lightweight browser `confirm("Remove all items from your cart?")` dialog is shown before execution as a basic UX safety check.
+
