@@ -20,6 +20,7 @@ async def log_tool_call(
     decision: str,
     user_approved: bool | None,
     success: bool,
+    agent_name: str = "shopmind_v1",
 ) -> int:
     """Log a tool call to the ai_actions audit trail.
 
@@ -33,6 +34,9 @@ async def log_tool_call(
         user_approved: True if user confirmed, False if rejected,
                        None if no confirmation was needed.
         success: Whether the tool call succeeded.
+        agent_name: Identifier for the agent making this call.
+                    Defaults to ``'shopmind_v1'`` (chat agent).
+                    Use ``'campaign_orchestrator'`` for campaign actions.
 
     Returns:
         The ID of the created ai_actions row.
@@ -42,10 +46,11 @@ async def log_tool_call(
         INSERT INTO ai_actions
             (session_id, agent_name, action_type, tool_name,
              input, output, decision, user_approved, success, timestamp)
-        VALUES ($1, 'shopmind_v1', 'tool_call', $2, $3, $4, $5, $6, $7, NOW())
+        VALUES ($1, $2, 'tool_call', $3, $4, $5, $6, $7, $8, NOW())
         RETURNING id
         """,
         session_id,
+        agent_name,
         tool_name,
         json.dumps(tool_input),
         json.dumps(tool_output),

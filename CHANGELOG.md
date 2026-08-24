@@ -318,3 +318,85 @@ current status.
 
 **Status:** Complete & Verified
 
+---
+
+## Stage J1 — Campaign Orchestrator: Database Table
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/schema.sql` — Appended `campaign_actions` table (id, session_id, cart_snapshot JSONB, cart_value, cart_age_minutes, decision, action_taken, discount_percent, simulated_channel, ai_action_log_id FK→ai_actions, created_at). Includes indexes on session_id and created_at.
+
+**Status:** Complete
+
+---
+
+## Stage J2 — Campaign Orchestrator: Tool Functions + Logging Update
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/campaign_tools.py` — Three async tool functions: `find_abandoned_carts(conn, min_age_minutes, min_cart_value)`, `get_cart_context(conn, session_id)`, `record_campaign_decision(conn, ...)`. Includes `CAMPAIGN_TOOL_DISPATCH` registry.
+
+**Modified:**
+- `backend/logging_middleware.py` — Added optional `agent_name` parameter to `log_tool_call()` (defaults to `'shopmind_v1'`). Changed INSERT from hardcoded agent name to parameterized `$2`. All existing callers remain unchanged.
+
+**Status:** Complete
+**Verified:** All three tools tested against live Postgres. `log_tool_call` correctly uses `'shopmind_v1'` by default and `'campaign_orchestrator'` when specified. Both agent names verified in database.
+
+---
+
+## Stage J3 — Campaign Orchestrator: Tool Schemas + Agent Loop
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/campaign_tool_definitions.py` — Provider-agnostic JSON-Schema tool definitions for `find_abandoned_carts`, `get_cart_context`, `record_campaign_decision`. Same format as `tool_definitions.py`.
+- `backend/campaign_agent.py` — Batch reasoning loop: discovers abandoned carts, evaluates each with a separate LLM call, dispatches `record_campaign_decision`. Includes `CAMPAIGN_SYSTEM_PROMPT` with detailed decision framework. Capped at `MAX_CARTS_PER_RUN=20`, max discount 15%.
+
+**Status:** Complete
+**Verified:** Imports clean, all constants correct.
+
+---
+
+## Stage J4 — Campaign Orchestrator: API Routes
+
+**Date:** 2026-08-24
+
+**Added:**
+- `backend/routes/campaign.py` — `POST /api/campaigns/run` (triggers one orchestrator pass, returns summary) and `GET /api/campaigns/history` (returns recent campaign_actions with stats). Both protected by `Depends(get_current_admin)`.
+
+**Modified:**
+- `backend/main.py` — Registered `campaign_router` alongside existing routers.
+
+**Status:** Complete
+**Verified:** Both routes registered and accessible at `/api/campaigns/run` and `/api/campaigns/history`.
+
+---
+
+## Stage J5 — Campaign Orchestrator: Dashboard Panel
+
+**Date:** 2026-08-24
+
+**Modified:**
+- `frontend/dashboard.html` — Added "Campaign Orchestrator" panel with summary stats (nudges sent / carts skipped), "Run Campaign Scan Now" button, status indicator, and history table (session, cart value, age, action, discount, channel, AI reasoning, date).
+- `frontend/js/dashboard.js` — Added `loadCampaignHistory()` (fetches `/api/campaigns/history`, renders table + stats), `runCampaignScan()` (calls `POST /api/campaigns/run` with loading states). Wired into `initDashboard()` and 30-second auto-refresh.
+
+**Status:** Complete
+
+---
+
+## Stage J6 — Campaign Orchestrator: End-to-End Verification
+
+**Date:** 2026-08-24
+
+**Verified:**
+- Seeded 3 test abandoned carts with different profiles (high-value with identity, low-value anonymous, medium-value returning customer).
+- Ran orchestrator via `run_campaign_scan()` — LLM produced differentiated decisions for each cart (different action types and reasoning based on cart value, customer type, and cart age).
+- Confirmed `campaign_actions` table populated with correct cart snapshots, values, decisions, and action types.
+- Confirmed `ai_actions` table contains entries with `agent_name='campaign_orchestrator'`, distinguishable from chat agent entries.
+- Dashboard panel renders correctly with stats, history table, and reasoning details.
+- CHANGELOG.md and EXPLANATION.md updated.
+
+**Status:** Complete & Verified
+

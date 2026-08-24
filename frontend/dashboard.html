@@ -273,6 +273,63 @@
           <div class="cart-empty">No failures recorded — the system handles errors gracefully when they occur.</div>
         </div>
       </div>
+
+      <!-- ── Campaign Orchestrator Panel ────────── -->
+      <div class="panel">
+        <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
+          🎯 Campaign Orchestrator
+          <button id="campaign-run-btn" onclick="runCampaignScan()" style="
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 18px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+          " onmouseover="this.style.background='var(--primary-dark)'" onmouseout="this.style.background='var(--primary)'">
+            ▶ Run Campaign Scan Now
+          </button>
+        </div>
+        <div class="panel-body">
+          <!-- Campaign Stats Row -->
+          <div id="campaign-stats" style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 140px; background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: 8px; padding: 12px 16px; text-align: center;">
+              <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px;">Nudges Sent</div>
+              <div id="campaign-nudges" style="font-size: 1.4rem; font-weight: 700; color: var(--success);">0</div>
+            </div>
+            <div style="flex: 1; min-width: 140px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius: 8px; padding: 12px 16px; text-align: center;">
+              <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px;">Carts Skipped</div>
+              <div id="campaign-skipped" style="font-size: 1.4rem; font-weight: 700; color: var(--warning);">0</div>
+            </div>
+          </div>
+
+          <!-- Campaign Run Status -->
+          <div id="campaign-status" style="display: none; margin-bottom: 16px; padding: 10px 14px; border-radius: 8px; font-size: 0.88rem; font-weight: 500;"></div>
+
+          <!-- Campaign History Table -->
+          <div style="overflow-x: auto;">
+            <table class="orders-table" id="campaign-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Cart Value</th>
+                  <th>Age</th>
+                  <th>Action</th>
+                  <th>Discount</th>
+                  <th>Channel</th>
+                  <th>AI Reasoning</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody id="campaign-tbody">
+                <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No campaign actions yet. Click "Run Campaign Scan Now" to start.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

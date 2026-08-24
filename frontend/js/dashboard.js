@@ -205,6 +205,7 @@ function initDashboard() {
   loadSessions();
   loadAiActions();
   loadOrders();
+  loadCampaignHistory();
 
   if (_refreshInterval) clearInterval(_refreshInterval);
   _refreshInterval = setInterval(() => {
@@ -214,6 +215,122 @@ function initDashboard() {
       loadSummary();
       loadAiActions();
       loadOrders();
+      loadCampaignHistory();
     }
   }, 30000);
 }
+
+// ── Campaign Orchestrator ─────────────────────
+
+async function loadCampaignHistory() {
+  try {
+    const res = await authFetch('/api/campaigns/history');
+    if (!res.ok) return;
+    const data = await res.json();
+    const tbody = document.getElementById('campaign-tbody');
+
+    // Update stats
+    if (data.stats) {
+      document.getElementById('campaign-nudges').textContent = data.stats.nudges_sent || 0;
+      document.getElementById('campaign-skipped').textContent = data.stats.carts_skipped || 0;
+    }
+
+    if (!data.actions || data.actions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No campaign actions yet. Click "Run Campaign Scan Now" to start.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.actions.map(action => {
+      const actionBadge = action.action_taken === 'reminder'
+        ? '<span class="status-badge paid">📧 Reminder</span>'
+        : action.action_taken === 'discount_offer'
+          ? '<span class="status-badge" style="background: rgba(245,158,11,0.12); color: #b45309;">🏷️ Discount</span>'
+          : '<span class="status-badge created">⏸️ No Action</span>';
+
+      const discount = action.discount_percent
+        ? action.discount_percent + '%'
+        : '—';
+
+      const channel = action.simulated_channel
+        ? (action.simulated_channel === 'email' ? '📧 Email' : '📱 SMS')
+        : '—';
+
+      const decisionText = action.decision || '—';
+      const shortDecision = decisionText.length > 120
+        ? decisionText.substring(0, 120) + '…'
+        : decisionText;
+
+      return `
+        <tr>
+          <td title="${action.session_id}">${(action.session_id || '').substring(0, 8)}…</td>
+          <td>${formatPrice(action.cart_value)}</td>
+          <td>${action.cart_age_minutes || 0} min</td>
+          <td>${actionBadge}</td>
+          <td>${discount}</td>
+          <td>${channel}</td>
+          <td style="max-width: 300px; font-size: 0.82rem; line-height: 1.4;">
+            <details>
+              <summary style="cursor: pointer; color: var(--primary); font-weight: 500;">💡 View Reasoning</summary>
+              <div style="margin-top: 6px; padding: 8px 10px; background: rgba(99,102,241,0.06); border-left: 3px solid rgba(99,102,241,0.4); border-radius: 0 4px 4px 0; white-space: pre-wrap;">
+                ${decisionText}
+              </div>
+            </details>
+          </td>
+          <td>${formatDate(action.created_at)}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Failed to load campaign history:', err);
+  }
+}
+
+async function runCampaignScan() {
+  const btn = document.getElementById('campaign-run-btn');
+  const statusEl = document.getElementById('campaign-status');
+
+  // Disable button during scan
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning…';
+  btn.style.opacity = '0.6';
+
+  statusEl.style.display = 'block';
+  statusEl.style.background = 'rgba(59,130,246,0.08)';
+  statusEl.style.color = 'var(--primary)';
+  statusEl.textContent = '🔍 Running campaign scan — the AI is evaluating abandoned carts…';
+
+  try {
+    const res = await authFetch('/api/campaigns/run', { method: 'POST' });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error (${res.status})`);
+    }
+
+    const data = await res.json();
+
+    // Show success status
+    statusEl.style.background = 'rgba(34,197,94,0.08)';
+    statusEl.style.color = 'var(--success)';
+    statusEl.innerHTML = `✅ ${data.message || 'Scan complete.'} — <strong>${data.nudges_sent || 0}</strong> nudge(s) sent, <strong>${data.carts_skipped || 0}</strong> skipped.`;
+
+    // Refresh the history table
+    await loadCampaignHistory();
+
+  } catch (err) {
+    statusEl.style.background = 'rgba(239,68,68,0.08)';
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = `❌ Scan failed: ${err.message}`;
+    console.error('Campaign scan failed:', err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Run Campaign Scan Now';
+    btn.style.opacity = '1';
+
+    // Auto-hide status after 10 seconds
+    setTimeout(() => {
+      statusEl.style.display = 'none';
+    }, 10000);
+  }
+}
+

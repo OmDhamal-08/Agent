@@ -65,6 +65,7 @@ from backend.routes.catalog import router as catalog_router
 from backend.routes.dashboard import router as dashboard_router
 from backend.routes.admin_auth import router as admin_auth_router
 from backend.routes.session import router as session_router
+from backend.routes.campaign import router as campaign_router
 
 app.include_router(chat_router)
 app.include_router(cart_router)
@@ -74,6 +75,7 @@ app.include_router(catalog_router)
 app.include_router(dashboard_router)
 app.include_router(admin_auth_router)
 app.include_router(session_router)
+app.include_router(campaign_router)
 
 
 # ──────────────────────────────────────────────

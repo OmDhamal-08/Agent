@@ -599,3 +599,92 @@ Customers and the AI agent could previously only add items to the cart or view i
 4. **UX Safeguard for Destructive Actions:**
    For `clear_cart` from the UI, a lightweight browser `confirm("Remove all items from your cart?")` dialog is shown before execution as a basic UX safety check.
 
+---
+
+## Stages J1–J6 — Campaign Orchestrator (Proactive Revenue Recovery)
+
+### What this feature does
+
+The Campaign Orchestrator is a **proactive agent** — separate from the reactive chat agent — that periodically scans for abandoned carts and uses LLM reasoning to decide whether to send a recovery nudge to the customer.  Unlike a simple scheduled email blast ("always email after 1 hour"), the orchestrator evaluates each abandoned cart individually and makes a genuine reasoning decision:
+
+- **Should it nudge at all?** Low-value carts (e.g., a single Rs.1,299 accessory) or very recently abandoned carts might not warrant intervention.
+- **What kind of nudge?** A plain reminder ("You left items in your cart!"), a discount offer (e.g., 5% for returning customers, 10% for first-time high-value buyers), or no action.
+- **What channel?** Email if the customer has one on file, SMS if only a phone number is available.
+
+Every decision — including deliberate "no action" decisions — is logged to both `campaign_actions` (purpose-built table) and `ai_actions` (shared audit trail), so the merchant can see exactly why the orchestrator acted (or didn't) for every cart.
+
+### Why it was built this way
+
+**1. Genuine LLM reasoning, not a fixed rule:**
+
+This is the core design principle.  A hardcoded rule like "email everyone after 1 hour with 10% off" is:
+- Not intelligent (wastes margin on customers who'd return anyway).
+- Not explainable (the decision text would be identical every time).
+- Not what the hackathon asks for (the track brief specifically calls out "Campaign orchestrator" as an example of agent-driven automation).
+
+Instead, the orchestrator sends each cart's full context (items, value, age, customer type) to the LLM with a carefully engineered system prompt that acts as a decision framework.  The LLM produces a unique, readable reasoning for each cart — e.g., *"Cart worth Rs.61,990, abandoned 2 hours ago, first-time customer — offering a plain email reminder without discount since the cart value doesn't yet justify margin loss."*
+
+**2. Same tool-calling pattern as the chat agent:**
+
+The orchestrator uses the same architectural pattern as the rest of ShopMind:
+- Neutral JSON-Schema tool definitions (`campaign_tool_definitions.py`) → Gemini adapter conversion.
+- Async tool functions (`campaign_tools.py`) following `async func(conn, **kwargs) -> dict`.
+- LLM calls via the shared `GeminiAdapter`.
+- Audit logging via the shared `log_tool_call()` helper.
+
+This means the campaign orchestrator's decisions show up in the **same `ai_actions` audit trail** that the chat agent, checkout flow, and direct UI actions all use — just with `agent_name = 'campaign_orchestrator'` instead of `'shopmind_v1'`.  A dashboard filter can easily separate them.
+
+**3. Separate `campaign_actions` table:**
+
+While `ai_actions` is the generic audit log (every tool call from every agent), `campaign_actions` is a purpose-built table optimized for campaign-specific queries: "show me all nudges sent this week, sorted by cart value."  The dashboard's Campaign Orchestrator panel reads from this table directly, avoiding the need to parse `ai_actions.output` JSON.
+
+The two tables are linked: `campaign_actions.ai_action_log_id` references `ai_actions.id`, so you can always trace a campaign decision back to its full audit trail entry.
+
+**4. Simulated sends (no real email/SMS):**
+
+Since there's no real email/SMS provider in this hackathon build, nudges are **simulated** — the orchestrator logs exactly what would have been sent, to whom, and why.  The `simulated_channel` column records whether it would be email or SMS.  This keeps the system safe for demo purposes while proving the reasoning works end-to-end.
+
+**5. No confirmation gate (but fully auditable):**
+
+Unlike the chat agent's `add_to_cart` and `initiate_checkout` tools, campaign nudges don't go through a human confirmation gate because:
+- They don't execute real payments or mutations.
+- They're simulated sends, not actual dispatches.
+- The merchant can review all decisions in the dashboard after the fact.
+
+However, every decision is **prominently logged** — the `decision` field contains the LLM's full reasoning, visible in both the Campaign Orchestrator dashboard panel and the AI Decision Trace.
+
+**6. Cooldown and cost controls:**
+
+- **Cooldown:** Sessions that have been nudged in the last 6 hours are excluded from future scans (`COOLDOWN_HOURS = 6`), preventing spam.
+- **Cart cap:** Each scan evaluates at most 20 carts (`MAX_CARTS_PER_RUN = 20`), preventing runaway LLM costs.
+- **Discount cap:** The system enforces a hard 15% maximum discount (`MAX_DISCOUNT_PERCENT = 15`), regardless of what the LLM suggests.
+
+### How it connects to the rest of the system
+
+| Component | Connection |
+|---|---|
+| `ai_actions` table | Campaign decisions logged with `agent_name='campaign_orchestrator'`, visible alongside chat agent entries in the AI Decision Trace panel. |
+| `log_tool_call()` | Reuses the existing logging helper with the new optional `agent_name` parameter (backward-compatible). |
+| `GeminiAdapter` | Uses the same adapter for LLM calls; tool definitions converted via the same `convert_tool_definitions()` path. |
+| `get_current_admin` | Campaign API routes are protected by the same JWT-based admin auth used by all dashboard endpoints. |
+| Merchant Dashboard | New panel added alongside existing Business Impact, AI Decision Trace, Orders, and Failure Handling panels. |
+
+### How this satisfies the hackathon track brief
+
+> **"Campaign orchestrator" example direction:**
+
+This feature directly implements the campaign orchestrator use case mentioned in the track brief.  It proves that the ShopMind agent can **proactively grow revenue** — not just respond reactively in chat — and that even a "marketing" action goes through the same **explainable, logged, reasoning pattern** as a checkout action.
+
+The key differentiator is that the orchestrator's decisions are **visible**:
+- The merchant sees WHY a nudge was (or wasn't) sent, in plain English.
+- The audit trail (`ai_actions`) shows campaign orchestrator entries alongside chat agent entries, proving a unified observability layer.
+- The dashboard panel shows stats (nudges sent vs. skipped) alongside detailed per-cart reasoning.
+
+### Assumptions and limitations
+
+1. **No real email/SMS:** Nudges are simulated.  In production, `record_campaign_decision` would integrate with SendGrid, Twilio, or similar.
+2. **Single-connection execution:** The orchestrator runs on a single database connection per scan.  For high-volume stores, this would need connection pooling and potentially async worker queues.
+3. **Cooldown is session-based, not customer-based:** If the same customer has multiple sessions, each is tracked independently.  A production system would deduplicate by customer identity.
+4. **LLM latency:** Each cart requires a separate LLM call (~1-3 seconds), so scanning 20 carts takes ~20-60 seconds.  This is acceptable for manual/demo use but would need batching or streaming for a real cron job at scale.
+5. **Returning customer detection:** Uses `customer_identities` to match email/phone across sessions.  Customers who don't provide contact info are treated as "unknown" (not first-time, not returning).
+

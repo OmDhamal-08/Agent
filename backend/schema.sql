@@ -98,3 +98,27 @@ CREATE TABLE IF NOT EXISTS customer_identities (
     CONSTRAINT uq_ci_phone UNIQUE (phone),
     CONSTRAINT chk_ci_contact CHECK (email IS NOT NULL OR phone IS NOT NULL)
 );
+
+-- Campaign Orchestrator actions (Stage J1)
+-- Purpose-built table for proactive recovery nudge decisions.
+-- Separate from ai_actions (which stays the generic audit log) so the
+-- dashboard can render a clean "Campaign Orchestrator" panel without
+-- parsing ai_actions.output JSON.
+CREATE TABLE IF NOT EXISTS campaign_actions (
+    id                  SERIAL PRIMARY KEY,
+    session_id          VARCHAR(100) NOT NULL,
+    cart_snapshot        JSONB,
+    cart_value           NUMERIC(10, 2),
+    cart_age_minutes     INTEGER,
+    decision             TEXT,
+    action_taken         VARCHAR(20) NOT NULL DEFAULT 'no_action'
+                         CHECK (action_taken IN ('no_action', 'reminder', 'discount_offer')),
+    discount_percent     NUMERIC(5, 2),
+    simulated_channel    VARCHAR(10)
+                         CHECK (simulated_channel IN ('email', 'sms') OR simulated_channel IS NULL),
+    ai_action_log_id     INTEGER REFERENCES ai_actions(id),
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_actions_session ON campaign_actions(session_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_actions_created ON campaign_actions(created_at);
