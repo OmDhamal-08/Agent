@@ -179,6 +179,7 @@ async def run_seed():
         await conn.execute("DELETE FROM co_purchase_history")
         await conn.execute("DELETE FROM ai_actions")
         await conn.execute("DELETE FROM cart_items")
+        await conn.execute("DELETE FROM order_items")
         await conn.execute("DELETE FROM orders")
         await conn.execute("DELETE FROM products")
         # Reset serial sequences so IDs start from 1

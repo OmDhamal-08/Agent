@@ -99,7 +99,7 @@ async function proceedToRazorpay(customerInfo) {
 
   // 1. Identify customer identity for cart recovery
   try {
-    await fetch('/api/session/identify', {
+    const identityRes = await fetch('/api/session/identify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -109,6 +109,15 @@ async function proceedToRazorpay(customerInfo) {
         phone: customerInfo.phone,
       }),
     });
+    if (!identityRes.ok) {
+      const err = await identityRes.json().catch(() => ({}));
+      throw new Error(err.detail || 'Could not save checkout information.');
+    }
+    const identity = await identityRes.json();
+    if (identity.recovery_code) {
+      localStorage.setItem('shopmind_recovery_code', identity.recovery_code);
+      alert(`Save this cart recovery code: ${identity.recovery_code}`);
+    }
   } catch (err) {
     console.warn('Could not save customer identity for recovery:', err);
   }

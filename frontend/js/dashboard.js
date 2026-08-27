@@ -27,6 +27,15 @@ function truncate(str, max = 60) {
 
 // ── Load business metrics ──────────────────────
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 async function loadSummary() {
   try {
     const res = await authFetch('/api/dashboard/summary');
@@ -107,17 +116,17 @@ async function loadAiActions() {
           <div class="action-icon">${icon}</div>
           <div class="action-details">
             <div class="action-tool">
-              ${action.tool_name || 'unknown'} ${approvalBadge}
-              <span class="action-time" style="float:right;">${formatDate(action.timestamp)}</span>
+              ${escapeHtml(action.tool_name || 'unknown')} ${approvalBadge}
+              <span class="action-time" style="float:right;">${escapeHtml(formatDate(action.timestamp))}</span>
             </div>
             <div class="action-decision" style="font-size: 0.95rem; font-weight: 500; color: var(--text-primary, #1a1a2e); margin: 6px 0; padding: 6px 10px; background: rgba(99,102,241,0.06); border-left: 3px solid rgba(99,102,241,0.4); border-radius: 0 4px 4px 0;">
-              💡 ${action.decision || '—'}
+              💡 ${escapeHtml(action.decision || '—')}
             </div>
             <details style="margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);">
               <summary>Input/Output</summary>
               <div style="margin-top: 4px;">
-                <strong>Input:</strong> <code>${inputSummary}</code><br>
-                <strong>Output:</strong> <code>${outputSummary}</code>
+                <strong>Input:</strong> <code>${escapeHtml(inputSummary)}</code><br>
+                <strong>Output:</strong> <code>${escapeHtml(outputSummary)}</code>
               </div>
             </details>
           </div>
@@ -152,12 +161,12 @@ async function loadOrders() {
       return `
         <tr>
           <td>#${order.id}</td>
-          <td title="${order.session_id}">${order.session_id.substring(0, 8)}…</td>
+          <td title="${escapeHtml(order.session_id)}">${escapeHtml(order.session_id.substring(0, 8))}…</td>
           <td>${formatPrice(order.total)}</td>
           <td>${aiLabel}</td>
           <td>${upsellLabel}</td>
-          <td><span class="status-badge ${statusClass}">${order.status.toUpperCase()}</span></td>
-          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${order.failure_reason || '—'}</td>
+          <td><span class="status-badge ${escapeHtml(statusClass)}">${escapeHtml(order.status.toUpperCase())}</span></td>
+          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(order.failure_reason || '—')}</td>
           <td>${formatDate(order.created_at)}</td>
         </tr>
       `;
@@ -184,10 +193,10 @@ function loadFailures(orders) {
   container.innerHTML = failedOrders.map(order => `
     <div class="failure-item">
       <div class="failure-reason">
-        ⚠️ Order #${order.id} — ${order.failure_reason || 'Unknown failure'}
+        ⚠️ Order #${order.id} — ${escapeHtml(order.failure_reason || 'Unknown failure')}
       </div>
       <div class="failure-meta">
-        Session: ${order.session_id.substring(0, 8)}… · 
+        Session: ${escapeHtml(order.session_id.substring(0, 8))}… ·
         Amount: ${formatPrice(order.total)} · 
         ${formatDate(order.created_at)}
         ${order.ai_assisted ? ' · 🤖 AI-Assisted' : ''}
@@ -262,7 +271,7 @@ async function loadCampaignHistory() {
 
       return `
         <tr>
-          <td title="${action.session_id}">${(action.session_id || '').substring(0, 8)}…</td>
+          <td title="${escapeHtml(action.session_id)}">${escapeHtml((action.session_id || '').substring(0, 8))}…</td>
           <td>${formatPrice(action.cart_value)}</td>
           <td>${action.cart_age_minutes || 0} min</td>
           <td>${actionBadge}</td>
@@ -272,7 +281,7 @@ async function loadCampaignHistory() {
             <details>
               <summary style="cursor: pointer; color: var(--primary); font-weight: 500;">💡 View Reasoning</summary>
               <div style="margin-top: 6px; padding: 8px 10px; background: rgba(99,102,241,0.06); border-left: 3px solid rgba(99,102,241,0.4); border-radius: 0 4px 4px 0; white-space: pre-wrap;">
-                ${decisionText}
+                ${escapeHtml(decisionText)}
               </div>
             </details>
           </td>
@@ -312,7 +321,7 @@ async function runCampaignScan() {
     // Show success status
     statusEl.style.background = 'rgba(34,197,94,0.08)';
     statusEl.style.color = 'var(--success)';
-    statusEl.innerHTML = `✅ ${data.message || 'Scan complete.'} — <strong>${data.nudges_sent || 0}</strong> nudge(s) sent, <strong>${data.carts_skipped || 0}</strong> skipped.`;
+    statusEl.textContent = `✅ ${data.message || 'Scan complete.'} — ${data.nudges_sent || 0} nudge(s) sent, ${data.carts_skipped || 0} skipped.`;
 
     // Refresh the history table
     await loadCampaignHistory();
@@ -333,4 +342,3 @@ async function runCampaignScan() {
     }, 10000);
   }
 }
-

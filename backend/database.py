@@ -40,6 +40,29 @@ async def create_pool() -> asyncpg.Pool:
         max_inactive_connection_lifetime=300.0,
         statement_cache_size=0 if is_tx_pooler else 1024,
     )
+    # Lightweight, idempotent runtime migrations.  This lets existing demo
+    # databases adopt security and payment-integrity changes without a reset.
+    async with _pool.acquire() as connection:
+        await connection.execute(
+            "ALTER TABLE customer_identities "
+            "ADD COLUMN IF NOT EXISTS recovery_code_hash TEXT"
+        )
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS order_items (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+                product_id INTEGER NOT NULL REFERENCES products(id),
+                quantity INTEGER NOT NULL CHECK (quantity > 0),
+                source VARCHAR(20) NOT NULL
+                    CHECK (source IN ('ai_recommendation', 'ai_upsell', 'organic')),
+                unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0)
+            )
+            """
+        )
+        await connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)"
+        )
     return _pool
 
 

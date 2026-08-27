@@ -382,29 +382,58 @@ async def initiate_checkout(
 
         {"success": false, "reason": "cart_is_empty"}
     """
-    cart = await get_cart(conn, session_id)
+    # Lock the cart rows while creating an order snapshot.  Subsequent payment
+    # processing uses order_items, never the mutable live cart.
+    async with conn.transaction():
+        rows = await conn.fetch(
+            """
+            SELECT ci.product_id, ci.quantity, ci.source, p.name AS product_name, p.price
+            FROM cart_items ci
+            JOIN products p ON p.id = ci.product_id
+            WHERE ci.session_id = $1
+            ORDER BY ci.created_at ASC
+            FOR UPDATE OF ci
+            """,
+            session_id,
+        )
 
-    if cart["item_count"] == 0:
-        return {"success": False, "reason": "cart_is_empty"}
+        if not rows:
+            return {"success": False, "reason": "cart_is_empty"}
 
-    ai_sources = {"ai_recommendation", "ai_upsell"}
-    ai_assisted = any(
-        item["source"] in ai_sources for item in cart["items"]
-    )
+        cart_items = []
+        total = 0.0
+        item_count = 0
+        for row in rows:
+            price = _dec(row["price"])
+            quantity = row["quantity"]
+            subtotal = round(price * quantity, 2)
+            total += subtotal
+            item_count += quantity
+            cart_items.append({
+                "product_id": row["product_id"],
+                "product_name": row["product_name"],
+                "price": price,
+                "quantity": quantity,
+                "source": row["source"],
+                "subtotal": subtotal,
+            })
+
+        ai_sources = {"ai_recommendation", "ai_upsell"}
+        ai_assisted = any(item["source"] in ai_sources for item in cart_items)
 
     # ── Upsell attribution ──────────────────────────────────────
     # Check for ai_upsell items to populate upsell metrics
-    upsell_items = [i for i in cart["items"] if i["source"] == "ai_upsell"]
-    upsell_accepted = len(upsell_items) > 0
-    upsell_amount = round(sum(i["subtotal"] for i in upsell_items), 2) if upsell_accepted else None
+        upsell_items = [i for i in cart_items if i["source"] == "ai_upsell"]
+        upsell_accepted = len(upsell_items) > 0
+        upsell_amount = round(sum(i["subtotal"] for i in upsell_items), 2) if upsell_accepted else None
 
     # Pick the first ai_recommendation-sourced item for the attribution column.
     # Assumption: ai_recommended_product_id is single-valued; if there are
     # multiple AI-recommended items we take the first one.
-    ai_rec_items = [i for i in cart["items"] if i["source"] == "ai_recommendation"]
-    ai_recommended_product_id = ai_rec_items[0]["product_id"] if ai_rec_items else None
+        ai_rec_items = [i for i in cart_items if i["source"] == "ai_recommendation"]
+        ai_recommended_product_id = ai_rec_items[0]["product_id"] if ai_rec_items else None
 
-    order_id = await conn.fetchval(
+        order_id = await conn.fetchval(
         """
         INSERT INTO orders
             (session_id, total, ai_assisted, status,
@@ -412,19 +441,29 @@ async def initiate_checkout(
         VALUES ($1, $2, $3, 'created', $4, $5, $6)
         RETURNING id
         """,
-        session_id,
-        cart["total"],
-        ai_assisted,
-        upsell_accepted,
-        upsell_amount,
-        ai_recommended_product_id,
-    )
+            session_id,
+            round(total, 2),
+            ai_assisted,
+            upsell_accepted,
+            upsell_amount,
+            ai_recommended_product_id,
+        )
+        await conn.executemany(
+            """
+            INSERT INTO order_items (order_id, product_id, quantity, source, unit_price)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            [
+                (order_id, item["product_id"], item["quantity"], item["source"], item["price"])
+                for item in cart_items
+            ],
+        )
 
     return {
         "success": True,
         "order_id": order_id,
-        "total": cart["total"],
-        "item_count": cart["item_count"],
+        "total": round(total, 2),
+        "item_count": item_count,
         "ai_assisted": ai_assisted,
     }
 
@@ -528,4 +567,3 @@ TOOL_DISPATCH: Dict[str, Any] = {
     "remove_from_cart": remove_from_cart,
     "clear_cart": clear_cart,
 }
-

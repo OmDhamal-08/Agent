@@ -224,6 +224,13 @@ async def run_agent(
         tool_response_parts = []
 
         for tool_call in llm_response.tool_calls:
+            if tool_calls_count >= MAX_TOOL_CALLS_PER_TURN:
+                return AgentResponse(
+                    type="text",
+                    content="I've reached my research limit for this request. Please narrow it down or ask a follow-up.",
+                    conversation_history=conversation_history,
+                    tool_calls_made=tool_calls_count,
+                )
             tool_calls_count += 1
             tool_name = tool_call.name
             tool_args = dict(tool_call.args) if tool_call.args else {}
@@ -369,6 +376,7 @@ async def execute_confirmed_action(
     # Continue the agent loop to get the LLM's response to the tool result
     # (It might want to call more tools, e.g., suggest accessories after add_to_cart)
     remaining_calls = MAX_TOOL_CALLS_PER_TURN - 1  # Used one for the confirmed action
+    tool_calls_count = 1
 
     for iteration in range(remaining_calls):
         try:
@@ -411,6 +419,15 @@ async def execute_confirmed_action(
         # Process tool calls
         tool_response_parts = []
         for tool_call in llm_response.tool_calls:
+            if tool_calls_count >= MAX_TOOL_CALLS_PER_TURN:
+                return AgentResponse(
+                    type="text",
+                    content="I've reached my research limit for this request. Please ask a follow-up if you need more help.",
+                    conversation_history=conversation_history,
+                    tool_result=confirmed_result,
+                    tool_calls_made=tool_calls_count,
+                )
+            tool_calls_count += 1
             t_name = tool_call.name
             t_args = dict(tool_call.args) if tool_call.args else {}
 

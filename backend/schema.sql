@@ -52,6 +52,20 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_session ON orders(session_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 
+-- Immutable order snapshot. Payment processing must use these rows rather
+-- than the live cart, which a customer can change while a payment is pending.
+CREATE TABLE IF NOT EXISTS order_items (
+    id          SERIAL PRIMARY KEY,
+    order_id    INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    product_id  INTEGER NOT NULL REFERENCES products(id),
+    quantity    INTEGER NOT NULL CHECK (quantity > 0),
+    source      VARCHAR(20) NOT NULL
+                CHECK (source IN ('ai_recommendation', 'ai_upsell', 'organic')),
+    unit_price  NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+
 -- AI Actions: full audit trail of every agent tool call
 CREATE TABLE IF NOT EXISTS ai_actions (
     id              SERIAL PRIMARY KEY,
@@ -93,6 +107,7 @@ CREATE TABLE IF NOT EXISTS customer_identities (
     email           VARCHAR(255),
     phone           VARCHAR(20),
     name            VARCHAR(255),
+    recovery_code_hash TEXT,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_ci_email UNIQUE (email),
     CONSTRAINT uq_ci_phone UNIQUE (phone),

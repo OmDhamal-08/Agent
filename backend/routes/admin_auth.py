@@ -6,6 +6,7 @@ Signup is gated behind an ADMIN_SIGNUP_CODE env var so random visitors
 cannot create dashboard accounts.
 """
 
+import hmac
 import os
 
 import asyncpg
@@ -29,13 +30,13 @@ ADMIN_SIGNUP_CODE = os.getenv("ADMIN_SIGNUP_CODE", "")
 # ── Request / response models ─────────────────
 
 class SignupRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     signup_code: str
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
@@ -52,7 +53,12 @@ async def admin_signup(
     environment variable. Passwords must be at least 8 characters.
     """
     # Validate signup code
-    if body.signup_code != ADMIN_SIGNUP_CODE:
+    if not ADMIN_SIGNUP_CODE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin signup is disabled until ADMIN_SIGNUP_CODE is configured.",
+        )
+    if not hmac.compare_digest(body.signup_code, ADMIN_SIGNUP_CODE):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid signup code.",

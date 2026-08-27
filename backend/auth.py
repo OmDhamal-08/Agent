@@ -18,7 +18,7 @@ load_dotenv()
 
 # ── Configuration ──────────────────────────────
 
-JWT_SECRET = os.getenv("JWT_SECRET", "change-me-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
@@ -51,6 +51,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     Returns:
         Encoded JWT string.
     """
+    if not JWT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Dashboard authentication is not configured.",
+        )
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(hours=JWT_EXPIRE_HOURS))
     to_encode.update({"exp": expire})
@@ -63,6 +68,11 @@ def decode_access_token(token: str) -> dict:
     Raises:
         JWTError: If the token is invalid, expired, or tampered with.
     """
+    if not JWT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Dashboard authentication is not configured.",
+        )
     return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
 
 

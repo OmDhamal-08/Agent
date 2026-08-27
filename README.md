@@ -39,6 +39,9 @@ cp .env.example .env
 #   RAZORPAY_KEY_ID  — Razorpay test-mode Key ID (rzp_test_...)
 #   RAZORPAY_KEY_SECRET — Razorpay test-mode Key Secret
 #   RAZORPAY_WEBHOOK_SECRET — Webhook signing secret
+#   JWT_SECRET — long random secret for merchant dashboard tokens
+#   ADMIN_SIGNUP_CODE — private code required to create merchant accounts
+#   CORS_ALLOW_ORIGINS — optional comma-separated browser origins
 ```
 
 ### 3. Seed the database

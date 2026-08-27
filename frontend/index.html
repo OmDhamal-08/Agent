@@ -97,6 +97,10 @@
           <label for="recover-contact">Email or Phone Number</label>
           <input type="text" id="recover-contact" required placeholder="om@example.com or 9876543210">
         </div>
+        <div class="form-group">
+          <label for="recover-code">Recovery Code</label>
+          <input type="text" id="recover-code" required autocomplete="one-time-code" placeholder="Code shown after checkout">
+        </div>
         <div class="modal-error" id="recover-modal-error"></div>
         <div class="modal-actions">
           <button type="button" class="modal-btn-secondary" onclick="closeRecoverModal()">Cancel</button>

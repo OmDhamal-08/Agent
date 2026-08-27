@@ -47,11 +47,20 @@ function formatPrice(amount) {
  */
 function formatMessage(text) {
   if (!text) return '';
-  return text
+  return escapeHtml(text)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
     .replace(/\n/g, '<br>');
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 // ── Message rendering ──────────────────────────
@@ -267,7 +276,7 @@ async function refreshCart() {
       return `
         <div class="cart-item">
           <div style="flex: 1; min-width: 0;">
-            <div class="cart-item-name">${item.product_name}</div>
+            <div class="cart-item-name">${escapeHtml(item.product_name)}</div>
             <div class="cart-item-meta">
               Qty: ${item.quantity} · <span class="source-badge ${sourceClass}">${sourceLabel}</span>
             </div>
@@ -343,11 +352,12 @@ function closeRecoverModal() {
 async function submitCartRecovery(e) {
   if (e) e.preventDefault();
   const contact = document.getElementById('recover-contact').value.trim();
+  const recoveryCode = document.getElementById('recover-code').value.trim();
   const errorEl = document.getElementById('recover-modal-error');
   const btn = document.getElementById('recover-submit-btn');
 
-  if (!contact) {
-    if (errorEl) errorEl.textContent = 'Please enter your email or phone number.';
+  if (!contact || !recoveryCode) {
+    if (errorEl) errorEl.textContent = 'Please enter your email or phone number and recovery code.';
     return;
   }
 
@@ -358,7 +368,9 @@ async function submitCartRecovery(e) {
   }
 
   const isEmail = contact.includes('@');
-  const payload = isEmail ? { email: contact } : { phone: contact };
+  const payload = isEmail
+    ? { email: contact, recovery_code: recoveryCode }
+    : { phone: contact, recovery_code: recoveryCode };
 
   try {
     const res = await fetch('/api/session/recover', {

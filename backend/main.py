@@ -18,6 +18,14 @@ from backend.database import create_pool, close_pool
 
 load_dotenv()
 
+
+def _cors_origins() -> list[str]:
+    """Read an explicit comma-separated CORS allow-list."""
+    configured = os.getenv("CORS_ALLOW_ORIGINS", "")
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return ["http://localhost:8000", "http://127.0.0.1:8000"]
+
 # ──────────────────────────────────────────────
 # Lifespan: database pool lifecycle
 # ──────────────────────────────────────────────
@@ -47,7 +55,7 @@ app = FastAPI(
 # CORS — allow frontend (served from same origin or dev server)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Hackathon: allow all; production: restrict
+    allow_origins=_cors_origins(),
     allow_credentials=False,  # No cookies used; session_id is in request bodies
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,6 +105,7 @@ async def health_check():
 
 from fastapi import Depends
 from backend.database import get_db
+from backend.auth import get_current_admin
 import asyncpg
 
 
@@ -104,6 +113,7 @@ import asyncpg
 async def simulate_stockout(
     payload: dict,
     conn: asyncpg.Connection = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
 ):
     """[DEV/DEMO ONLY] Set a product's stock to 0 to simulate out-of-stock."""
     product_id = payload.get("product_id")
@@ -125,6 +135,7 @@ async def simulate_stockout(
 async def restore_stock(
     payload: dict,
     conn: asyncpg.Connection = Depends(get_db),
+    admin: dict = Depends(get_current_admin),
 ):
     """[DEV/DEMO ONLY] Restore a product's stock to a given quantity."""
     product_id = payload.get("product_id")
