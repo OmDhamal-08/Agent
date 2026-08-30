@@ -233,6 +233,26 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     },
+    # 10. get_pre_checkout_suggestions
+    {
+        "name": "get_pre_checkout_suggestions",
+        "description": (
+            "Get personalized accessory and complementary product suggestions "
+            "based on the current cart contents. Call this BEFORE initiating "
+            "checkout to suggest relevant add-ons the customer might want. "
+            "Returns suggestions filtered to exclude items already in the cart."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Active shopping session identifier.",
+                },
+            },
+            "required": ["session_id"],
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------

@@ -106,19 +106,21 @@ async def campaign_history(
     rows = await conn.fetch(
         """
         SELECT
-            id,
-            session_id,
-            cart_snapshot,
-            cart_value,
-            cart_age_minutes,
-            decision,
-            action_taken,
-            discount_percent,
-            simulated_channel,
-            ai_action_log_id,
-            created_at
-        FROM campaign_actions
-        ORDER BY created_at DESC
+            ca.id,
+            ca.session_id,
+            ca.cart_snapshot,
+            ca.cart_value,
+            ca.cart_age_minutes,
+            ca.decision,
+            ca.action_taken,
+            ca.discount_percent,
+            ca.simulated_channel,
+            ca.ai_action_log_id,
+            ca.created_at,
+            ci.email AS customer_email
+        FROM campaign_actions ca
+        LEFT JOIN customer_identities ci ON ci.session_id = ca.session_id
+        ORDER BY ca.created_at DESC
         LIMIT $1
         """,
         limit,

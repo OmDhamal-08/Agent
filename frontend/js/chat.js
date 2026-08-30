@@ -35,32 +35,62 @@ const inputEl = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
 
 function scrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function formatPrice(amount) {
+  if (amount == null || isNaN(amount)) return '₹0';
   return '₹' + Number(amount).toLocaleString('en-IN');
 }
 
-/**
- * Simple markdown-like formatting: **bold**, bullet lists, newlines.
- */
-function formatMessage(text) {
-  if (!text) return '';
-  return escapeHtml(text)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/^[-•]\s+(.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-    .replace(/\n/g, '<br>');
-}
-
 function escapeHtml(value) {
+  if (value == null) return '';
   return String(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/**
+ * Rich markdown-like formatting: bold, inline code, bullets (*, -, •), numbered lists, newlines.
+ */
+function formatMessage(text) {
+  if (!text) return '';
+
+  let formatted = escapeHtml(text);
+
+  // Bold: **text**
+  formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // Inline code: `code`
+  formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Numbered list items: "1. item", "2. item"
+  formatted = formatted.replace(/^[ \t]*(\d+)\.\s+(.+)$/gm, '<li class="num-item" value="$1">$2</li>');
+
+  // Bullet list items: "* item", "- item", "• item"
+  formatted = formatted.replace(/^[ \t]*[\*\-•]\s+(.+)$/gm, '<li class="bullet-item">$1</li>');
+
+  // Group numbered list items into <ol>
+  formatted = formatted.replace(/((?:<li class="num-item"[^>]*>.*?<\/li>\s*)+)/gs, function(match) {
+    return '<ol>' + match.replace(/\s*(<li class="num-item"[^>]*>.*?<\/li>)\s*/gs, '$1') + '</ol>';
+  });
+
+  // Group bullet list items into <ul>
+  formatted = formatted.replace(/((?:<li class="bullet-item">.*?<\/li>\s*)+)/gs, function(match) {
+    return '<ul>' + match.replace(/\s*(<li class="bullet-item">.*?<\/li>)\s*/gs, '$1') + '</ul>';
+  });
+
+  // Convert newlines to <br>, avoiding awkward extra breaks directly adjoining lists
+  formatted = formatted
+    .replace(/(<\/ul>|<\/ol>)\n+/g, '$1')
+    .replace(/\n+(<ul>|<ol>)/g, '$1')
+    .replace(/\n/g, '<br>')
+    .replace(/(<br>){3,}/g, '<br><br>');
+
+  return formatted;
 }
 
 // ── Message rendering ──────────────────────────
@@ -79,9 +109,11 @@ function addMessage(role, content, extra) {
 
   // If this is a confirmation request, add buttons
   if (extra && extra.type === 'pending_confirmation' && extra.pending_action) {
+    // Remove any previously existing confirmation buttons first
+    document.querySelectorAll('.confirmation-actions').forEach(el => el.remove());
+
     const actions = document.createElement('div');
     actions.className = 'confirmation-actions';
-    actions.id = 'confirm-actions';
 
     const confirmBtn = document.createElement('button');
     confirmBtn.className = 'btn-confirm';
@@ -100,7 +132,7 @@ function addMessage(role, content, extra) {
 
   msg.appendChild(avatar);
   msg.appendChild(bubble);
-  messagesEl.appendChild(msg);
+  if (messagesEl) messagesEl.appendChild(msg);
   scrollToBottom();
   return msg;
 }
@@ -135,10 +167,14 @@ async function sendMessage() {
   const text = inputEl.value.trim();
   if (!text || isWaiting) return;
 
+  // Remove any stale confirmation buttons from previous turns
+  document.querySelectorAll('.confirmation-actions').forEach(el => el.remove());
+
   addMessage('user', text);
   inputEl.value = '';
   isWaiting = true;
   sendBtn.disabled = true;
+  inputEl.disabled = true;
   addTypingIndicator();
 
   try {
@@ -149,12 +185,24 @@ async function sendMessage() {
     });
 
     removeTypingIndicator();
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const errDetail = data && (data.detail || data.message);
+      addMessage('agent', `⚠️ ${errDetail || 'Something went wrong connecting to the server. Please try again.'}`);
+      return;
+    }
+
+    if (data.type === 'error') {
+      addMessage('agent', `⚠️ ${data.content || 'An error occurred while processing your request.'}`);
+      return;
+    }
 
     if (data.type === 'pending_confirmation') {
       pendingAction = data.pending_action;
       addMessage('agent', data.content, data);
     } else {
+      pendingAction = null;
       addMessage('agent', data.content);
     }
 
@@ -166,13 +214,14 @@ async function sendMessage() {
   } finally {
     isWaiting = false;
     sendBtn.disabled = false;
+    inputEl.disabled = false;
     inputEl.focus();
   }
 }
 
 async function handleConfirm(actionId) {
-  const actionsEl = document.getElementById('confirm-actions');
-  if (actionsEl) actionsEl.remove();
+  // Remove all active confirmation buttons immediately to prevent double-clicks
+  document.querySelectorAll('.confirmation-actions').forEach(el => el.remove());
 
   isWaiting = true;
   sendBtn.disabled = true;
@@ -186,7 +235,14 @@ async function handleConfirm(actionId) {
     });
 
     removeTypingIndicator();
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const errDetail = data && (data.detail || data.message);
+      addMessage('agent', `⚠️ ${errDetail || 'Something went wrong processing your confirmation. Please try again.'}`);
+      pendingAction = null;
+      return;
+    }
 
     if (data.type === 'pending_confirmation') {
       pendingAction = data.pending_action;
@@ -212,8 +268,8 @@ async function handleConfirm(actionId) {
 }
 
 async function handleCancel(actionId) {
-  const actionsEl = document.getElementById('confirm-actions');
-  if (actionsEl) actionsEl.remove();
+  // Remove confirmation buttons immediately
+  document.querySelectorAll('.confirmation-actions').forEach(el => el.remove());
 
   isWaiting = true;
   sendBtn.disabled = true;
@@ -227,8 +283,13 @@ async function handleCancel(actionId) {
     });
 
     removeTypingIndicator();
-    const data = await res.json();
-    addMessage('agent', data.content);
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      addMessage('agent', 'Action cancelled.');
+    } else {
+      addMessage('agent', data.content || 'Action cancelled.');
+    }
     pendingAction = null;
   } catch (err) {
     removeTypingIndicator();
@@ -245,6 +306,10 @@ async function handleCancel(actionId) {
 async function refreshCart() {
   try {
     const res = await fetch(`/api/cart?session_id=${sessionId}`);
+    if (!res.ok) {
+      console.warn('Cart refresh failed with status:', res.status);
+      return;
+    }
     const data = await res.json();
 
     const cartItemsEl = document.getElementById('cart-items');
@@ -252,6 +317,8 @@ async function refreshCart() {
     const cartTotalEl = document.getElementById('cart-total');
     const checkoutBtn = document.getElementById('checkout-btn');
     const clearCartBtn = document.getElementById('clear-cart-btn');
+
+    if (!cartItemsEl || !cartCountEl || !cartTotalEl) return;
 
     if (!data.items || data.items.length === 0) {
       cartItemsEl.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Ask the AI to recommend laptops!</div>';
@@ -303,6 +370,8 @@ async function removeCartItem(productId) {
 
     if (res.ok) {
       await refreshCart();
+    } else {
+      console.warn('Could not remove cart item:', await res.text());
     }
   } catch (err) {
     console.error('Error removing item from cart:', err);
@@ -323,6 +392,7 @@ async function clearCart() {
 
     if (res.ok) {
       await refreshCart();
+      addMessage('agent', 'Your cart has been cleared.');
     }
   } catch (err) {
     console.error('Error clearing cart:', err);
@@ -334,89 +404,135 @@ function requestCheckout() {
   sendMessage();
 }
 
-// ── Cart Recovery Modals ───────────────────────
+// ── Auth & Identity ────────────────────────────
 
-function openRecoverModal() {
-  const modal = document.getElementById('recover-modal');
-  const errorEl = document.getElementById('recover-modal-error');
+function showEmailModal() {
+  const modal = document.getElementById('email-modal');
+  const errorEl = document.getElementById('email-modal-error');
   if (errorEl) errorEl.textContent = '';
-  if (document.getElementById('recover-contact')) document.getElementById('recover-contact').value = '';
+  if (document.getElementById('email-input')) document.getElementById('email-input').value = '';
   if (modal) modal.style.display = 'flex';
+  if (inputEl) inputEl.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
 }
 
-function closeRecoverModal() {
-  const modal = document.getElementById('recover-modal');
+function hideEmailModal() {
+  const modal = document.getElementById('email-modal');
   if (modal) modal.style.display = 'none';
+  if (inputEl) inputEl.disabled = false;
+  if (sendBtn) sendBtn.disabled = false;
 }
 
-async function submitCartRecovery(e) {
+async function submitEmail(e) {
   if (e) e.preventDefault();
-  const contact = document.getElementById('recover-contact').value.trim();
-  const recoveryCode = document.getElementById('recover-code').value.trim();
-  const errorEl = document.getElementById('recover-modal-error');
-  const btn = document.getElementById('recover-submit-btn');
+  const emailInput = document.getElementById('email-input');
+  const errorEl = document.getElementById('email-modal-error');
+  const btn = document.getElementById('email-submit-btn');
+  const email = emailInput ? emailInput.value.trim() : '';
 
-  if (!contact || !recoveryCode) {
-    if (errorEl) errorEl.textContent = 'Please enter your email or phone number and recovery code.';
+  if (!email || !email.includes('@')) {
+    if (errorEl) {
+      errorEl.style.color = 'var(--danger)';
+      errorEl.textContent = 'Please enter a valid email address.';
+    }
     return;
   }
 
   if (btn) btn.disabled = true;
   if (errorEl) {
     errorEl.style.color = 'var(--text-muted)';
-    errorEl.textContent = 'Looking for your saved cart...';
+    errorEl.textContent = 'Loading...';
   }
 
-  const isEmail = contact.includes('@');
-  const payload = isEmail
-    ? { email: contact, recovery_code: recoveryCode }
-    : { phone: contact, recovery_code: recoveryCode };
+  await startSessionWithEmail(email, false);
+  
+  if (btn) btn.disabled = false;
+}
 
+async function startSessionWithEmail(email, isReturning) {
   try {
-    const res = await fetch('/api/session/recover', {
+    const res = await fetch('/api/session/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ email }),
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
+      const errorEl = document.getElementById('email-modal-error');
       if (errorEl) {
         errorEl.style.color = 'var(--danger)';
-        errorEl.textContent = data.detail || 'No saved cart found for that contact.';
+        errorEl.textContent = data.detail || 'Something went wrong.';
       }
+      showEmailModal();
       return;
     }
 
-    // Recovered! Update active session_id
     setSessionId(data.session_id);
-    closeRecoverModal();
+    localStorage.setItem('shopmind_user_email', email);
+    
+    const displayEl = document.getElementById('user-email-display');
+    if (displayEl) displayEl.textContent = email;
+    
+    const userInfoEl = document.getElementById('user-info');
+    if (userInfoEl) userInfoEl.style.display = 'flex';
+    
+    hideEmailModal();
     await refreshCart();
 
-    addMessage('agent', `🎉 Welcome back${data.name ? ' **' + data.name + '**' : ''}! I have restored your saved shopping cart from your previous session.`);
+    if (isReturning && !data.is_new) {
+      addMessage('agent', `🎉 Welcome back! I've restored your session and cart. How can I help you today?`);
+    } else {
+      addMessage('agent', "Hi! I'm **ShopMind AI** 🧠 — your personal laptop shopping assistant.\n\nI can help you find the perfect laptop based on your budget, use case, and preferences. I can also compare models, suggest accessories, and handle checkout.\n\n**What are you looking for today?** Tell me your budget, what you'll use it for (coding, gaming, ML, general use), or any specific requirements!");
+    }
+    
   } catch (err) {
+    console.error('Start session error:', err);
+    const errorEl = document.getElementById('email-modal-error');
     if (errorEl) {
       errorEl.style.color = 'var(--danger)';
       errorEl.textContent = 'Connection error. Please try again.';
     }
-    console.error('Recovery error:', err);
-  } finally {
-    if (btn) btn.disabled = false;
+    showEmailModal();
   }
 }
 
-// ── Keyboard shortcut ──────────────────────────
-inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
+function switchAccount() {
+  localStorage.removeItem('shopmind_user_email');
+  localStorage.removeItem('shopmind_session_id');
+  sessionStorage.removeItem('shopmind_customer_info');
+  window.location.reload();
+}
+
+// ── Global Keyboard Shortcuts ──────────────────
+if (inputEl) {
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+}
+
+// Close modals when Escape key is pressed
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (typeof closeCheckoutModal === 'function') closeCheckoutModal();
   }
 });
 
 // ── Init ───────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  addMessage('agent', "Hi! I'm **ShopMind AI** 🧠 — your personal laptop shopping assistant.\n\nI can help you find the perfect laptop based on your budget, use case, and preferences. I can also compare models, suggest accessories, and handle checkout.\n\n**What are you looking for today?** Tell me your budget, what you'll use it for (coding, gaming, ML, general use), or any specific requirements!");
-  refreshCart();
-  inputEl.focus();
+document.addEventListener('DOMContentLoaded', async () => {
+  const savedEmail = localStorage.getItem('shopmind_user_email');
+  
+  if (savedEmail) {
+    // Returning user — restore session from email
+    await startSessionWithEmail(savedEmail, true);
+  } else {
+    // New user — show email modal
+    showEmailModal();
+  }
+  
+  if (inputEl) inputEl.focus();
 });

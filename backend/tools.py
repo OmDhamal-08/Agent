@@ -553,6 +553,124 @@ async def clear_cart(
 
 
 # ---------------------------------------------------------------------------
+# 10. get_pre_checkout_suggestions
+# ---------------------------------------------------------------------------
+
+async def get_pre_checkout_suggestions(
+    conn: asyncpg.Connection,
+    session_id: str,
+) -> Dict[str, Any]:
+    """Get personalized accessory suggestions based on the current cart.
+
+    Looks at all laptops in the cart, finds complementary products from
+    co_purchase_history, filters out items already in the cart, deduplicates
+    across laptops, and returns a clean list ordered by popularity.
+
+    Returns::
+
+        {
+            "suggestions": [...],
+            "count": N,
+            "cart_total": float,
+            "cart_item_count": int,
+        }
+    """
+    # 1. Get all items currently in the cart
+    cart_rows = await conn.fetch(
+        """
+        SELECT ci.product_id, p.name, p.price, p.category, ci.quantity
+        FROM cart_items ci
+        JOIN products p ON p.id = ci.product_id
+        WHERE ci.session_id = $1
+        ORDER BY ci.created_at ASC
+        """,
+        session_id,
+    )
+
+    if not cart_rows:
+        return {
+            "suggestions": [],
+            "count": 0,
+            "cart_total": 0,
+            "cart_item_count": 0,
+        }
+
+    # Calculate cart summary
+    cart_product_ids = set()
+    cart_total = 0.0
+    cart_item_count = 0
+    laptop_ids: List[int] = []
+
+    for row in cart_rows:
+        cart_product_ids.add(row["product_id"])
+        cart_total += _dec(row["price"]) * row["quantity"]
+        cart_item_count += row["quantity"]
+        if row["category"] == "laptop":
+            laptop_ids.append(row["product_id"])
+
+    if not laptop_ids:
+        # No laptops in cart — nothing to suggest
+        return {
+            "suggestions": [],
+            "count": 0,
+            "cart_total": round(cart_total, 2),
+            "cart_item_count": cart_item_count,
+        }
+
+    # 2. Find complementary products for ALL laptops in the cart, deduplicated
+    rows = await conn.fetch(
+        """
+        SELECT DISTINCT ON (p.id)
+            p.id,
+            p.name,
+            p.price,
+            p.category,
+            p.ram_gb,
+            p.gpu,
+            p.cpu,
+            p.use_case,
+            p.stock,
+            cph.co_purchase_count,
+            anchor.name AS anchor_product_name
+        FROM co_purchase_history cph
+        JOIN products p ON p.id = cph.complementary_product_id
+        JOIN products anchor ON anchor.id = cph.product_id
+        WHERE cph.product_id = ANY($1)
+          AND p.stock > 0
+          AND p.id != ALL($2)
+        ORDER BY p.id, cph.co_purchase_count DESC
+        """,
+        laptop_ids,
+        list(cart_product_ids),
+    )
+
+    # 3. Build suggestions list sorted by co-purchase frequency
+    suggestions = []
+    for row in rows:
+        suggestions.append({
+            "id": row["id"],
+            "name": row["name"],
+            "price": _dec(row["price"]),
+            "category": row["category"],
+            "co_purchase_count": row["co_purchase_count"],
+            "relevance": f"Frequently bought with {row['anchor_product_name']}",
+        })
+
+    # Sort by popularity (highest co-purchase count first)
+    suggestions.sort(key=lambda x: x["co_purchase_count"], reverse=True)
+
+    # Limit to top 5 suggestions
+    suggestions = suggestions[:5]
+
+    return {
+        "suggestions": suggestions,
+        "count": len(suggestions),
+        "cart_total": round(cart_total, 2),
+        "cart_item_count": cart_item_count,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
@@ -566,4 +684,5 @@ TOOL_DISPATCH: Dict[str, Any] = {
     "initiate_checkout": initiate_checkout,
     "remove_from_cart": remove_from_cart,
     "clear_cart": clear_cart,
+    "get_pre_checkout_suggestions": get_pre_checkout_suggestions,
 }

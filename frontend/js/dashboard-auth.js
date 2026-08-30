@@ -178,15 +178,17 @@ async function handleSignup(e) {
       return;
     }
 
+    // Auto switch to login view and prefill email
+    toggleAuthMode('login');
+    const loginEmailEl = document.getElementById('login-email');
+    const loginPasswordEl = document.getElementById('login-password');
+    if (loginEmailEl) loginEmailEl.value = email;
+    if (loginPasswordEl) loginPasswordEl.value = '';
+
     if (msgEl) {
       msgEl.style.color = 'var(--success)';
-      msgEl.textContent = 'Account created! You can now log in.';
+      msgEl.textContent = '✅ Account created! You can now log in.';
     }
-
-    // Auto switch to login view and prefill email
-    document.getElementById('login-email').value = email;
-    document.getElementById('login-password').value = '';
-    toggleAuthMode('login');
   } catch (err) {
     if (msgEl) {
       msgEl.style.color = 'var(--danger)';
@@ -199,6 +201,10 @@ async function handleSignup(e) {
 }
 
 function handleLogout() {
+  if (typeof _refreshInterval !== 'undefined' && _refreshInterval) {
+    clearInterval(_refreshInterval);
+    _refreshInterval = null;
+  }
   sessionStorage.removeItem(ADMIN_TOKEN_KEY);
   sessionStorage.removeItem(ADMIN_EMAIL_KEY);
   showAuthView();
@@ -221,16 +227,16 @@ async function checkAdminAuth() {
     });
 
     if (res.ok) {
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       showDashboardView(data.email || email);
-    } else {
+    } else if (res.status === 401 || res.status === 403) {
       sessionStorage.removeItem(ADMIN_TOKEN_KEY);
       sessionStorage.removeItem(ADMIN_EMAIL_KEY);
       showAuthView();
     }
   } catch (err) {
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-    showAuthView();
+    console.warn('Could not verify admin session:', err);
+    // Don't wipe token immediately on temporary network failure
   }
 }
 

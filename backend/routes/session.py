@@ -1,17 +1,19 @@
-"""Customer identity and recovery-code protected cart recovery."""
+"""Customer identity and session management."""
 
-import hashlib
-import hmac
-import secrets
+import uuid
 from typing import Optional
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.database import get_db
 
 router = APIRouter(prefix="/api/session", tags=["session"])
+
+
+class SessionStartRequest(BaseModel):
+    email: str
 
 
 class IdentifyRequest(BaseModel):
@@ -21,21 +23,45 @@ class IdentifyRequest(BaseModel):
     name: Optional[str] = None
 
 
-class RecoverRequest(BaseModel):
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    recovery_code: str
+@router.post("/start")
+async def session_start(
+    body: SessionStartRequest, conn: asyncpg.Connection = Depends(get_db)
+) -> dict[str, str | bool | None]:
+    """Start or resume a session by email."""
+    email = body.email.lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required.")
 
-
-def _hash_recovery_code(code: str) -> str:
-    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+    row = await conn.fetchrow(
+        "SELECT session_id, name FROM customer_identities WHERE email = $1", email
+    )
+    if row:
+        return {
+            "session_id": row["session_id"],
+            "is_new": False,
+            "name": row["name"],
+        }
+    
+    new_session_id = str(uuid.uuid4())
+    await conn.execute(
+        """
+        INSERT INTO customer_identities (session_id, email, updated_at)
+        VALUES ($1, $2, NOW())
+        """,
+        new_session_id, email,
+    )
+    return {
+        "session_id": new_session_id,
+        "is_new": True,
+        "name": None,
+    }
 
 
 @router.post("/identify")
 async def session_identify(
     body: IdentifyRequest, conn: asyncpg.Connection = Depends(get_db)
 ) -> dict[str, str]:
-    """Save a customer identity and issue a high-entropy recovery code."""
+    """Save customer identity during checkout."""
     email = body.email.lower().strip() if body.email else None
     phone = body.phone.strip() if body.phone else None
     name = body.name.strip() if body.name else None
@@ -48,58 +74,29 @@ async def session_identify(
         raise HTTPException(status_code=409, detail="Email and phone belong to different customer records.")
 
     existing = email_match or phone_match
-    recovery_code = secrets.token_urlsafe(12)
-    recovery_code_hash = _hash_recovery_code(recovery_code)
+    
     if existing:
         await conn.execute(
             """
             UPDATE customer_identities
             SET session_id = $1, name = COALESCE($2, name), email = COALESCE($3, email),
-                phone = COALESCE($4, phone), recovery_code_hash = $5, updated_at = NOW()
-            WHERE id = $6
+                phone = COALESCE($4, phone), updated_at = NOW()
+            WHERE id = $5
             """,
-            body.session_id, name, email, phone, recovery_code_hash, existing["id"],
+            body.session_id, name, email, phone, existing["id"],
         )
     else:
         await conn.execute(
             """
             INSERT INTO customer_identities
-                (session_id, email, phone, name, recovery_code_hash, updated_at)
-            VALUES ($1, $2, $3, $4, $5, NOW())
+                (session_id, email, phone, name, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
             """,
-            body.session_id, email, phone, name, recovery_code_hash,
+            body.session_id, email, phone, name,
         )
 
     return {
         "status": "ok",
         "message": "Customer identity updated successfully.",
         "session_id": body.session_id,
-        "recovery_code": recovery_code,
     }
-
-
-@router.post("/recover")
-async def session_recover(
-    body: RecoverRequest, conn: asyncpg.Connection = Depends(get_db)
-) -> dict[str, str | None]:
-    """Recover a cart only after contact and recovery-code verification."""
-    email = body.email.lower().strip() if body.email else None
-    phone = body.phone.strip() if body.phone else None
-    if not email and not phone:
-        raise HTTPException(status_code=400, detail="Please provide an email or phone number.")
-
-    row = None
-    if email:
-        row = await conn.fetchrow(
-            "SELECT session_id, name, recovery_code_hash FROM customer_identities WHERE email = $1",
-            email,
-        )
-    if row is None and phone:
-        row = await conn.fetchrow(
-            "SELECT session_id, name, recovery_code_hash FROM customer_identities WHERE phone = $1",
-            phone,
-        )
-    supplied_hash = _hash_recovery_code(body.recovery_code)
-    if row is None or not row["recovery_code_hash"] or not hmac.compare_digest(supplied_hash, row["recovery_code_hash"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The recovery details are invalid.")
-    return {"status": "success", "session_id": row["session_id"], "name": row["name"]}

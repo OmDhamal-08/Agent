@@ -15,11 +15,12 @@ let pendingCheckoutTotal = null;
  */
 async function handleCheckoutConfirmed(toolResult) {
   try {
-    const orderId = toolResult && toolResult.order_id;
-    const total = toolResult && toolResult.total;
+    const rawOrderId = toolResult?.order_id || toolResult?.order?.id;
+    const orderId = parseInt(rawOrderId, 10);
+    const total = Number(toolResult?.total || 0);
 
-    if (!orderId) {
-      addMessage('agent', "I couldn't find your order. Let's try the checkout again.");
+    if (!orderId || isNaN(orderId)) {
+      addMessage('agent', "I couldn't find your order details. Let's try the checkout again.");
       return;
     }
 
@@ -36,7 +37,9 @@ async function handleCheckoutConfirmed(toolResult) {
           await proceedToRazorpay(savedInfo);
           return;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Error reading saved customer info:', e);
+      }
     }
 
     // Otherwise prompt for customer contact details
@@ -62,6 +65,12 @@ function openCheckoutModal() {
     } catch (e) {}
   }
 
+  const custEmailEl = document.getElementById('cust-email');
+  if (custEmailEl && !custEmailEl.value) {
+    const savedEmail = localStorage.getItem('shopmind_user_email');
+    if (savedEmail) custEmailEl.value = savedEmail;
+  }
+
   if (modal) modal.style.display = 'flex';
 }
 
@@ -78,24 +87,58 @@ async function submitCustomerDetails(e) {
   const errorEl = document.getElementById('checkout-modal-error');
   const btn = document.getElementById('cust-submit-btn');
 
-  if (!name || (!email && !phone)) {
-    if (errorEl) errorEl.textContent = 'Please provide your name and at least an email or phone.';
+  if (errorEl) errorEl.textContent = '';
+
+  if (!name) {
+    if (errorEl) errorEl.textContent = 'Please provide your full name.';
     return;
   }
 
-  const customerInfo = { name, email, phone };
-  sessionStorage.setItem(CUSTOMER_INFO_KEY, JSON.stringify(customerInfo));
+  if (!email && !phone) {
+    if (errorEl) errorEl.textContent = 'Please provide at least an email address or phone number.';
+    return;
+  }
 
-  closeCheckoutModal();
-  await proceedToRazorpay(customerInfo);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (errorEl) errorEl.textContent = 'Please enter a valid email address.';
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Processing...';
+  }
+
+  try {
+    const customerInfo = { name, email, phone };
+    sessionStorage.setItem(CUSTOMER_INFO_KEY, JSON.stringify(customerInfo));
+
+    closeCheckoutModal();
+    await proceedToRazorpay(customerInfo);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Proceed to Payment';
+    }
+  }
 }
 
 /**
  * Saves customer identity to backend and launches Razorpay checkout modal.
  */
 async function proceedToRazorpay(customerInfo) {
-  const orderId = pendingCheckoutOrderId || lastOrderId;
-  const totalAmount = pendingCheckoutTotal;
+  const orderId = parseInt(pendingCheckoutOrderId || lastOrderId, 10);
+
+  if (!orderId || isNaN(orderId)) {
+    addMessage('agent', "No active order found to process payment. Please ask me to start checkout.");
+    return;
+  }
+
+  // Check if Razorpay library is loaded
+  if (typeof Razorpay === 'undefined') {
+    addMessage('agent', "⚠️ The Razorpay payment gateway could not be loaded. Please ensure you are connected to the internet and disable any ad-blocker blocking checkout.razorpay.com, then try again.");
+    return;
+  }
 
   // 1. Identify customer identity for cart recovery
   try {
@@ -105,18 +148,16 @@ async function proceedToRazorpay(customerInfo) {
       body: JSON.stringify({
         session_id: sessionId,
         name: customerInfo.name,
-        email: customerInfo.email,
-        phone: customerInfo.phone,
+        email: customerInfo.email || null,
+        phone: customerInfo.phone || null,
       }),
     });
-    if (!identityRes.ok) {
+
+    if (identityRes.ok) {
+      // Nothing needed here
+    } else {
       const err = await identityRes.json().catch(() => ({}));
-      throw new Error(err.detail || 'Could not save checkout information.');
-    }
-    const identity = await identityRes.json();
-    if (identity.recovery_code) {
-      localStorage.setItem('shopmind_recovery_code', identity.recovery_code);
-      alert(`Save this cart recovery code: ${identity.recovery_code}`);
+      console.warn('Customer identification notice:', err.detail || 'Could not save identity.');
     }
   } catch (err) {
     console.warn('Could not save customer identity for recovery:', err);
@@ -130,21 +171,20 @@ async function proceedToRazorpay(customerInfo) {
       body: JSON.stringify({ order_id: orderId, session_id: sessionId }),
     });
 
+    const orderData = await res.json().catch(() => ({}));
+
     if (!res.ok) {
-      const err = await res.json();
-      addMessage('agent', `Payment setup failed: ${err.detail || 'Unknown error'}. Please try again.`);
+      addMessage('agent', `Payment setup failed: ${orderData.detail || 'Unknown error'}. Please try again.`);
       return;
     }
-
-    const orderData = await res.json();
 
     // 3. Open Razorpay Checkout with actual customer details
     const options = {
       key: orderData.key_id,
       amount: orderData.amount,
-      currency: orderData.currency,
+      currency: orderData.currency || 'INR',
       name: 'ShopMind Electronics',
-      description: 'Laptop Purchase',
+      description: `Order #${orderId} Purchase`,
       order_id: orderData.razorpay_order_id,
       handler: async function (response) {
         await verifyPayment(response, orderId);
@@ -192,7 +232,7 @@ async function verifyPayment(razorpayResponse, orderId) {
       }),
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
 
     if (data.status === 'success') {
       addMessage('agent',
@@ -201,6 +241,8 @@ async function verifyPayment(razorpayResponse, orderId) {
         `**Payment ID:** ${razorpayResponse.razorpay_payment_id}\n\n` +
         "Thank you for shopping with ShopMind AI! Your items will be shipped soon. 🚀"
       );
+      pendingCheckoutOrderId = null;
+      pendingCheckoutTotal = null;
       await refreshCart();
     } else {
       addMessage('agent',
@@ -247,3 +289,4 @@ async function handlePaymentFailure(response, orderId) {
     "Just let me know and I'll help you complete the purchase!"
   );
 }
+

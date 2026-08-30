@@ -7,7 +7,7 @@
  */
 
 function formatPrice(amount) {
-  if (amount == null || amount === 0) return '₹0';
+  if (amount == null || isNaN(amount) || amount === 0) return '₹0';
   return '₹' + Number(amount).toLocaleString('en-IN');
 }
 
@@ -42,14 +42,23 @@ async function loadSummary() {
     if (!res.ok) return;
     const data = await res.json();
 
-    document.getElementById('m-revenue').textContent = formatPrice(data.total_revenue);
-    document.getElementById('m-orders').textContent = data.total_orders;
-    document.getElementById('m-ai-pct').textContent = data.ai_assisted_percentage + '%';
-    document.getElementById('m-aov').textContent = formatPrice(data.avg_order_value);
-    document.getElementById('m-ai-revenue').textContent = formatPrice(data.ai_assisted_revenue);
-    document.getElementById('m-upsells').textContent = data.upsell_accepted_count;
-    document.getElementById('m-upsell-rev').textContent = formatPrice(data.upsell_revenue);
-    document.getElementById('m-failed').textContent = data.failed_orders_count;
+    const mRev = document.getElementById('m-revenue');
+    const mOrders = document.getElementById('m-orders');
+    const mAiPct = document.getElementById('m-ai-pct');
+    const mAov = document.getElementById('m-aov');
+    const mAiRev = document.getElementById('m-ai-revenue');
+    const mUpsells = document.getElementById('m-upsells');
+    const mUpsellRev = document.getElementById('m-upsell-rev');
+    const mFailed = document.getElementById('m-failed');
+
+    if (mRev) mRev.textContent = formatPrice(data.total_revenue || 0);
+    if (mOrders) mOrders.textContent = data.total_orders || 0;
+    if (mAiPct) mAiPct.textContent = (data.ai_assisted_percentage || 0) + '%';
+    if (mAov) mAov.textContent = formatPrice(data.avg_order_value || 0);
+    if (mAiRev) mAiRev.textContent = formatPrice(data.ai_assisted_revenue || 0);
+    if (mUpsells) mUpsells.textContent = data.upsell_accepted_count || 0;
+    if (mUpsellRev) mUpsellRev.textContent = formatPrice(data.upsell_revenue || 0);
+    if (mFailed) mFailed.textContent = data.failed_orders_count || 0;
   } catch (err) {
     console.error('Failed to load summary:', err);
   }
@@ -63,14 +72,21 @@ async function loadSessions() {
     if (!res.ok) return;
     const data = await res.json();
     const select = document.getElementById('session-select');
+    if (!select) return;
+
+    const currentVal = select.value;
     select.innerHTML = '<option value="">All Sessions</option>';
 
-    data.sessions.forEach(s => {
+    (data.sessions || []).forEach(s => {
       const opt = document.createElement('option');
       opt.value = s.session_id;
-      opt.textContent = `${s.session_id.substring(0, 8)}… (${s.action_count} actions)`;
+      const shortId = (s.session_id || '').substring(0, 8);
+      opt.textContent = `${shortId}… (${s.action_count || 0} actions)`;
       select.appendChild(opt);
     });
+
+    // Restore selected option if still present
+    if (currentVal) select.value = currentVal;
   } catch (err) {
     console.error('Failed to load sessions:', err);
   }
@@ -80,7 +96,8 @@ async function loadSessions() {
 
 async function loadAiActions() {
   try {
-    const sessionId = document.getElementById('session-select').value;
+    const select = document.getElementById('session-select');
+    const sessionId = select ? select.value : '';
     const url = sessionId
       ? `/api/dashboard/ai-actions?session_id=${sessionId}`
       : '/api/dashboard/ai-actions';
@@ -89,6 +106,7 @@ async function loadAiActions() {
     if (!res.ok) return;
     const data = await res.json();
     const container = document.getElementById('ai-actions-list');
+    if (!container) return;
 
     if (!data.actions || data.actions.length === 0) {
       container.innerHTML = '<div class="cart-empty">No AI actions recorded yet.</div>';
@@ -123,7 +141,7 @@ async function loadAiActions() {
               💡 ${escapeHtml(action.decision || '—')}
             </div>
             <details style="margin-top: 4px; font-size: 0.75rem; color: var(--text-muted);">
-              <summary>Input/Output</summary>
+              <summary style="cursor: pointer;">Input/Output</summary>
               <div style="margin-top: 4px;">
                 <strong>Input:</strong> <code>${escapeHtml(inputSummary)}</code><br>
                 <strong>Output:</strong> <code>${escapeHtml(outputSummary)}</code>
@@ -146,14 +164,16 @@ async function loadOrders() {
     if (!res.ok) return;
     const data = await res.json();
     const tbody = document.getElementById('orders-tbody');
+    if (!tbody) return;
 
     if (!data.orders || data.orders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No orders yet.</td></tr>';
+      loadFailures([]);
       return;
     }
 
     tbody.innerHTML = data.orders.map(order => {
-      const statusClass = order.status;
+      const statusClass = order.status || 'created';
       const aiLabel = order.ai_assisted ? '🤖 Yes' : '👤 No';
       const upsellLabel = order.upsell_accepted === true ? '✅ ' + formatPrice(order.upsell_amount) :
                            order.upsell_accepted === false ? '❌ Declined' : '—';
@@ -161,11 +181,11 @@ async function loadOrders() {
       return `
         <tr>
           <td>#${order.id}</td>
-          <td title="${escapeHtml(order.session_id)}">${escapeHtml(order.session_id.substring(0, 8))}…</td>
+          <td title="${escapeHtml(order.session_id || '')}">${escapeHtml((order.session_id || '').substring(0, 8))}…</td>
           <td>${formatPrice(order.total)}</td>
           <td>${aiLabel}</td>
           <td>${upsellLabel}</td>
-          <td><span class="status-badge ${escapeHtml(statusClass)}">${escapeHtml(order.status.toUpperCase())}</span></td>
+          <td><span class="status-badge ${escapeHtml(statusClass)}">${escapeHtml((order.status || '').toUpperCase())}</span></td>
           <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(order.failure_reason || '—')}</td>
           <td>${formatDate(order.created_at)}</td>
         </tr>
@@ -183,7 +203,9 @@ async function loadOrders() {
 
 function loadFailures(orders) {
   const container = document.getElementById('failures-list');
-  const failedOrders = orders.filter(o => o.status === 'failed');
+  if (!container) return;
+
+  const failedOrders = (orders || []).filter(o => o.status === 'failed');
 
   if (failedOrders.length === 0) {
     container.innerHTML = '<div class="cart-empty">No failures recorded — the system handles errors gracefully when they occur.</div>';
@@ -196,7 +218,7 @@ function loadFailures(orders) {
         ⚠️ Order #${order.id} — ${escapeHtml(order.failure_reason || 'Unknown failure')}
       </div>
       <div class="failure-meta">
-        Session: ${escapeHtml(order.session_id.substring(0, 8))}… ·
+        Session: ${escapeHtml((order.session_id || '').substring(0, 8))}… ·
         Amount: ${formatPrice(order.total)} · 
         ${formatDate(order.created_at)}
         ${order.ai_assisted ? ' · 🤖 AI-Assisted' : ''}
@@ -245,7 +267,7 @@ async function loadCampaignHistory() {
     }
 
     if (!data.actions || data.actions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No campaign actions yet. Click "Run Campaign Scan Now" to start.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted);">No campaign actions yet. Click "Run Campaign Scan Now" to start.</td></tr>';
       return;
     }
 
@@ -264,6 +286,8 @@ async function loadCampaignHistory() {
         ? (action.simulated_channel === 'email' ? '📧 Email' : '📱 SMS')
         : '—';
 
+      const customerEmail = action.customer_email || '—';
+
       const decisionText = action.decision || '—';
       const shortDecision = decisionText.length > 120
         ? decisionText.substring(0, 120) + '…'
@@ -272,6 +296,7 @@ async function loadCampaignHistory() {
       return `
         <tr>
           <td title="${escapeHtml(action.session_id)}">${escapeHtml((action.session_id || '').substring(0, 8))}…</td>
+          <td>${escapeHtml(customerEmail)}</td>
           <td>${formatPrice(action.cart_value)}</td>
           <td>${action.cart_age_minutes || 0} min</td>
           <td>${actionBadge}</td>
