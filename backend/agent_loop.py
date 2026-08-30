@@ -70,11 +70,14 @@ CRITICAL RULES — follow these exactly:
 9. The session_id for this conversation is: {session_id}
    Always use this session_id when calling tools that require it.
 
-10. NUMBERED LISTS & REFERENCES: When suggesting or listing multiple products, ALWAYS number them clearly (e.g., 1. [Product A], 2. [Product B]). If the customer responds by saying "add number 2" or "I want the third one", YOU MUST correctly map their number to the exact `product_id` from your previous message's list before calling `add_to_cart`.
+10. NUMBERED LISTS & MULTIPLE PRODUCTS: When suggesting or listing multiple products, ALWAYS number them clearly (e.g., 1. [Product A], 2. [Product B]). If the customer responds by saying "add number 2", "add 1 and 2", or "add product 1, 2", YOU MUST correctly map each number to its exact `product_id` and call `add_to_cart` for EACH product requested. Never omit any requested products.
 
 11. AUTOMATIC UPSELLS: IMMEDIATELY after successfully adding a laptop or main product to the cart, DO NOT ask "what else do you want?". Instead, AUTOMATICALLY call `get_complementary_products` to find related items (like bags, mice, cooling pads), check if they already have them (Rule 3), and directly suggest adding them to the cart in the same response.
+   EXCEPTION: If the customer has explicitly requested checkout or payment (e.g., 'and checkout', 'then do checkout for me', 'proceed to pay'), DO NOT suggest upsells — proceed directly to call `initiate_checkout`.
 
 12. CART REMOVAL & CLEAR: When a customer asks to remove an item from their cart, call remove_from_cart with the product_id. When they ask to clear or empty their entire cart, call clear_cart. These actions execute immediately without requiring confirmation.
+
+13. CHECKOUT PRIORITY: If the customer's request includes checkout or payment alongside adding products (e.g., 'add product number 1, 2 in cart with laptop and then do checkout for me'), add all requested products to the cart first, and once they are added, call `initiate_checkout`.
 """
 
 
@@ -83,13 +86,24 @@ CRITICAL RULES — follow these exactly:
 # ──────────────────────────────────────────────
 
 @dataclass
+class PendingActionItem:
+    """A single tool call that requires user confirmation before executing."""
+    tool_name: str
+    tool_args: dict
+    description: str
+    ai_action_log_id: Optional[int] = None
+    call_id: Optional[str] = None
+
+
+@dataclass
 class PendingConfirmation:
-    """A tool call that requires user confirmation before executing."""
+    """A tool call (or batch of tool calls) that requires user confirmation before executing."""
     action_id: str
     tool_name: str
     tool_args: dict
     description: str
     ai_action_log_id: Optional[int] = None
+    actions: List[PendingActionItem] = field(default_factory=list)
 
 
 @dataclass
@@ -125,20 +139,260 @@ async def _execute_tool(
         return {"error": f"Tool execution failed: {str(e)}"}
 
 
-def _get_confirmation_description(tool_name: str, tool_args: dict) -> str:
+async def _get_confirmation_description(
+    conn: Optional[asyncpg.Connection],
+    tool_name: str,
+    tool_args: dict,
+) -> str:
     """Build a human-readable description for a confirmation-gated action."""
     template = TOOLS_REQUIRING_CONFIRMATION.get(tool_name, "Perform action: {tool_name}")
 
     if tool_name == "add_to_cart":
-        # We'll fill in product_name later, for now use product_id
+        pid = tool_args.get("product_id")
+        pname = None
+        if pid is not None and conn is not None:
+            try:
+                pname = await conn.fetchval(
+                    "SELECT name FROM products WHERE id = $1",
+                    int(pid),
+                )
+            except Exception:
+                pname = None
+        product_label = pname if pname else f"Product #{pid or '?'}"
         return template.format(
-            product_name=f"Product #{tool_args.get('product_id', '?')}",
+            product_name=product_label,
             quantity=tool_args.get("quantity", 1),
         )
     elif tool_name == "initiate_checkout":
         return template
     else:
         return f"Execute {tool_name}"
+
+
+def _combine_descriptions(items: List[PendingActionItem]) -> str:
+    """Combine descriptions for multiple confirmation-gated actions into a single coherent phrase."""
+    if not items:
+        return "proceed with requested action"
+    if len(items) == 1:
+        return items[0].description
+
+    all_add = all(item.tool_name == "add_to_cart" for item in items)
+    if all_add:
+        product_labels = []
+        for item in items:
+            desc = item.description
+            if desc.startswith("Add ") and desc.endswith(" to your cart"):
+                product_labels.append(desc[4:-13])
+            else:
+                product_labels.append(desc)
+        if len(product_labels) == 2:
+            combined = f"{product_labels[0]} and {product_labels[1]}"
+        else:
+            combined = f"{', '.join(product_labels[:-1])}, and {product_labels[-1]}"
+        return f"Add {combined} to your cart"
+
+    descs = [item.description for item in items]
+    if len(descs) == 2:
+        return f"{descs[0]} and {descs[1]}"
+    return f"{', '.join(descs[:-1])}, and {descs[-1]}"
+
+
+def _get_tool_param_names(tool_name: str) -> set:
+    """Get the parameter names for a tool from its definition."""
+    for tool_def in TOOL_DEFINITIONS:
+        if tool_def["name"] == tool_name:
+            return set(tool_def["parameters"].get("properties", {}).keys())
+    return set()
+
+
+# ──────────────────────────────────────────────
+# Core unified agent loop
+# ──────────────────────────────────────────────
+
+async def _run_loop(
+    conversation_history: list,
+    session_id: str,
+    conn: asyncpg.Connection,
+    adapter: GeminiAdapter,
+    tool_calls_count: int = 0,
+    confirmed_result: Optional[dict] = None,
+    is_chained: bool = False,
+) -> AgentResponse:
+    """
+    Execute turns of the agent loop until the LLM returns text or pauses for confirmation.
+    Handles multiple simultaneous tool calls, confirmation gates, and error handling.
+    """
+    while tool_calls_count < MAX_TOOL_CALLS_PER_TURN:
+        try:
+            llm_response: LLMResponse = await adapter.call_llm(
+                conversation_history=conversation_history,
+                tool_definitions=TOOL_DEFINITIONS,
+                system_instruction=SYSTEM_PROMPT.format(session_id=session_id),
+            )
+        except Exception as e:
+            return AgentResponse(
+                type="error",
+                content=f"I'm having trouble connecting to my AI backend. Please try again in a moment. (Error: {str(e)})",
+                conversation_history=conversation_history,
+                tool_calls_made=tool_calls_count,
+                tool_result=confirmed_result,
+            )
+
+        # Append model's response turn to history
+        if llm_response.candidate_content:
+            conversation_history.append(llm_response.candidate_content)
+        elif llm_response.raw_parts:
+            model_content = adapter.build_model_content(llm_response.raw_parts)
+            conversation_history.append(model_content)
+
+        # Case A: Text response and no tool calls
+        if llm_response.text and not llm_response.tool_calls:
+            return AgentResponse(
+                type="text",
+                content=llm_response.text,
+                conversation_history=conversation_history,
+                tool_calls_made=tool_calls_count,
+                tool_result=confirmed_result,
+            )
+
+        # Case B: No text and no tool calls
+        if not llm_response.tool_calls:
+            return AgentResponse(
+                type="text",
+                content="I'm not sure how to help with that. Could you tell me more about what you're looking for in a laptop?",
+                conversation_history=conversation_history,
+                tool_calls_made=tool_calls_count,
+                tool_result=confirmed_result,
+            )
+
+        # Case C: Tool calls
+        gated_calls = []
+        non_gated_calls = []
+
+        for tool_call in llm_response.tool_calls:
+            t_name = tool_call.name
+            t_args = dict(tool_call.args) if tool_call.args else {}
+            if "session_id" in _get_tool_param_names(t_name):
+                t_args["session_id"] = session_id
+
+            if t_name in TOOLS_REQUIRING_CONFIRMATION:
+                gated_calls.append((tool_call, t_name, t_args))
+            else:
+                non_gated_calls.append((tool_call, t_name, t_args))
+
+        # If any tool in this turn requires confirmation, pause and collect all
+        if gated_calls:
+            action_id = str(uuid.uuid4())
+            pending_items: List[PendingActionItem] = []
+
+            for tool_call, t_name, t_args in gated_calls:
+                desc = await _get_confirmation_description(conn, t_name, t_args)
+                ai_log_id = await log_tool_call(
+                    conn=conn,
+                    session_id=session_id,
+                    tool_name=t_name,
+                    tool_input=t_args,
+                    tool_output={"status": "awaiting_confirmation"},
+                    decision=f"Agent wants to {desc}. Awaiting user confirmation.",
+                    user_approved=None,
+                    success=True,
+                )
+                pending_items.append(
+                    PendingActionItem(
+                        tool_name=t_name,
+                        tool_args=t_args,
+                        description=desc,
+                        ai_action_log_id=ai_log_id,
+                        call_id=tool_call.id,
+                    )
+                )
+
+            # Include any non-gated calls in this turn into the pending batch
+            for tool_call, t_name, t_args in non_gated_calls:
+                pending_items.append(
+                    PendingActionItem(
+                        tool_name=t_name,
+                        tool_args=t_args,
+                        description=f"Execute {t_name}",
+                        ai_action_log_id=None,
+                        call_id=tool_call.id,
+                    )
+                )
+
+            gated_only = [item for item in pending_items if item.tool_name in TOOLS_REQUIRING_CONFIRMATION]
+            combined_desc = _combine_descriptions(gated_only)
+            primary = gated_only[0]
+
+            pending_action = PendingConfirmation(
+                action_id=action_id,
+                tool_name=primary.tool_name,
+                tool_args=primary.tool_args,
+                description=combined_desc,
+                ai_action_log_id=primary.ai_action_log_id,
+                actions=pending_items,
+            )
+
+            prompt_prefix = "I'd also like to" if is_chained else "I'd like to"
+            content = f"{prompt_prefix} **{combined_desc.lower()}**. Shall I go ahead?"
+
+            return AgentResponse(
+                type="pending_confirmation",
+                content=content,
+                pending_action=pending_action,
+                conversation_history=conversation_history,
+                tool_calls_made=tool_calls_count + len(pending_items),
+                tool_result=confirmed_result,
+            )
+
+        # All tool calls in this turn are non-gated
+        tool_response_parts = []
+        for tool_call, t_name, t_args in non_gated_calls:
+            if tool_calls_count >= MAX_TOOL_CALLS_PER_TURN:
+                return AgentResponse(
+                    type="text",
+                    content="I've reached my research limit for this request. Please narrow it down or ask a follow-up.",
+                    conversation_history=conversation_history,
+                    tool_calls_made=tool_calls_count,
+                    tool_result=confirmed_result,
+                )
+            tool_calls_count += 1
+
+            result = await _execute_tool(conn, t_name, t_args)
+            success = "error" not in result
+
+            await log_tool_call(
+                conn=conn,
+                session_id=session_id,
+                tool_name=t_name,
+                tool_input=t_args,
+                tool_output=result,
+                decision=f"Called {t_name} to gather information.",
+                user_approved=None,
+                success=success,
+            )
+
+            tool_response_parts.append(
+                adapter.build_tool_response(
+                    tool_name=t_name,
+                    result=result,
+                    call_id=tool_call.id,
+                )
+            )
+
+        if tool_response_parts:
+            tool_content = adapter.build_tool_response_content(tool_response_parts)
+            conversation_history.append(tool_content)
+
+    return AgentResponse(
+        type="text",
+        content=(
+            "I've done extensive research for you! Let me summarize what I found. "
+            "If you need more specific information, feel free to ask."
+        ),
+        conversation_history=conversation_history,
+        tool_calls_made=tool_calls_count,
+        tool_result=confirmed_result,
+    )
 
 
 # ──────────────────────────────────────────────
@@ -156,170 +410,20 @@ async def run_agent(
     Run the agent loop for a single user turn.
 
     1. Appends the user message to conversation history.
-    2. Calls the LLM with the history and tool definitions.
-    3. If the LLM returns a text response → return it.
-    4. If the LLM returns tool calls:
-       a. For confirmation-gated tools → pause and return pending_confirmation.
-       b. For other tools → execute, log, append results, continue loop.
-    5. Caps at MAX_TOOL_CALLS_PER_TURN to prevent runaway loops.
-
-    Args:
-        user_message: The user's chat message.
-        session_id: Shopping session identifier.
-        conversation_history: Mutable list of conversation turns (modified in place).
-        conn: asyncpg database connection.
-        adapter: The LLM adapter (e.g., GeminiAdapter).
-
-    Returns:
-        AgentResponse with the agent's reply or a pending confirmation request.
+    2. Runs the loop: calls LLM, handles tool calls & confirmation gates.
+    3. Returns AgentResponse with final text or pending confirmation.
     """
-    # Append user message to history
     user_content = adapter.build_user_message(user_message)
     conversation_history.append(user_content)
 
-    tool_calls_count = 0
-
-    for iteration in range(MAX_TOOL_CALLS_PER_TURN):
-        # Call the LLM
-        try:
-            llm_response: LLMResponse = await adapter.call_llm(
-                conversation_history=conversation_history,
-                tool_definitions=TOOL_DEFINITIONS,
-                system_instruction=SYSTEM_PROMPT.format(session_id=session_id),
-            )
-        except Exception as e:
-            return AgentResponse(
-                type="error",
-                content=f"I'm having trouble connecting to my AI backend. Please try again in a moment. (Error: {str(e)})",
-                conversation_history=conversation_history,
-                tool_calls_made=tool_calls_count,
-            )
-
-        # Append the model's response to history (for both text and tool calls)
-        if llm_response.candidate_content:
-            conversation_history.append(llm_response.candidate_content)
-        elif llm_response.raw_parts:
-            model_content = adapter.build_model_content(llm_response.raw_parts)
-            conversation_history.append(model_content)
-
-        # ── Case A: LLM returned a text response ──
-        if llm_response.text and not llm_response.tool_calls:
-            return AgentResponse(
-                type="text",
-                content=llm_response.text,
-                conversation_history=conversation_history,
-                tool_calls_made=tool_calls_count,
-            )
-
-        # ── Case B: LLM wants to call tools ──
-        if not llm_response.tool_calls:
-            # Edge case: no text and no tool calls
-            return AgentResponse(
-                type="text",
-                content="I'm not sure how to help with that. Could you tell me more about what you're looking for in a laptop?",
-                conversation_history=conversation_history,
-                tool_calls_made=tool_calls_count,
-            )
-
-        tool_response_parts = []
-
-        for tool_call in llm_response.tool_calls:
-            if tool_calls_count >= MAX_TOOL_CALLS_PER_TURN:
-                return AgentResponse(
-                    type="text",
-                    content="I've reached my research limit for this request. Please narrow it down or ask a follow-up.",
-                    conversation_history=conversation_history,
-                    tool_calls_made=tool_calls_count,
-                )
-            tool_calls_count += 1
-            tool_name = tool_call.name
-            tool_args = dict(tool_call.args) if tool_call.args else {}
-
-            # Inject session_id for tools that need it
-            if "session_id" in _get_tool_param_names(tool_name):
-                tool_args["session_id"] = session_id
-
-            # ── Check if this tool requires confirmation ──
-            if tool_name in TOOLS_REQUIRING_CONFIRMATION:
-                description = _get_confirmation_description(tool_name, tool_args)
-                action_id = str(uuid.uuid4())
-
-                # Log the pending action (user_approved=None means awaiting)
-                ai_log_id = await log_tool_call(
-                    conn=conn,
-                    session_id=session_id,
-                    tool_name=tool_name,
-                    tool_input=tool_args,
-                    tool_output={"status": "awaiting_confirmation"},
-                    decision=f"Agent wants to {description}. Awaiting user confirmation.",
-                    user_approved=None,
-                    success=True,
-                )
-
-                return AgentResponse(
-                    type="pending_confirmation",
-                    content=f"I'd like to **{description.lower()}**. Shall I go ahead?",
-                    pending_action=PendingConfirmation(
-                        action_id=action_id,
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        description=description,
-                        ai_action_log_id=ai_log_id,
-                    ),
-                    conversation_history=conversation_history,
-                    tool_calls_made=tool_calls_count,
-                )
-
-            # ── Execute non-gated tool ──
-            result = await _execute_tool(conn, tool_name, tool_args)
-            success = "error" not in result
-
-            # Log the tool call
-            await log_tool_call(
-                conn=conn,
-                session_id=session_id,
-                tool_name=tool_name,
-                tool_input=tool_args,
-                tool_output=result,
-                decision=f"Called {tool_name} to gather information.",
-                user_approved=None,  # No confirmation needed
-                success=success,
-            )
-
-            # Build tool response part for the LLM
-            tool_response_parts.append(
-                adapter.build_tool_response(
-                    tool_name=tool_name,
-                    result=result,
-                    call_id=tool_call.id,
-                )
-            )
-
-        # Append all tool responses to history
-        if tool_response_parts:
-            tool_content = adapter.build_tool_response_content(tool_response_parts)
-            conversation_history.append(tool_content)
-
-        # Continue the loop — LLM will process tool results next iteration
-
-    # Max iterations reached
-    return AgentResponse(
-        type="text",
-        content=(
-            "I've done extensive research for you! Let me summarize what I found. "
-            "If you need more specific information, feel free to ask."
-        ),
+    return await _run_loop(
         conversation_history=conversation_history,
-        tool_calls_made=tool_calls_count,
+        session_id=session_id,
+        conn=conn,
+        adapter=adapter,
+        tool_calls_count=0,
+        is_chained=False,
     )
-
-
-def _get_tool_param_names(tool_name: str) -> set:
-    """Get the parameter names for a tool from its definition."""
-    for tool_def in TOOL_DEFINITIONS:
-        if tool_def["name"] == tool_name:
-            return set(tool_def["parameters"].get("properties", {}).keys())
-    return set()
 
 
 # ──────────────────────────────────────────────
@@ -334,168 +438,80 @@ async def execute_confirmed_action(
     adapter: GeminiAdapter,
 ) -> AgentResponse:
     """
-    Execute a previously-gated tool call after user confirmation.
+    Execute previously-gated tool calls after user confirmation.
 
-    This runs the tool, logs the result, feeds it back to the LLM,
-    and continues the agent loop until the LLM produces a text response.
+    Runs each confirmed tool, updates audit logs in ai_actions, feeds
+    all tool results back to the LLM turn, and continues the loop.
     """
-    # Execute the confirmed tool
-    result = await _execute_tool(conn, pending.tool_name, pending.tool_args)
-    success = "error" not in result and result.get("success", True)
-
-    # Capture the confirmed tool's result so it can be forwarded to the frontend
-    # (e.g., order_id from initiate_checkout)
-    confirmed_result = {"tool_name": pending.tool_name, **result}
-
-    # Update the existing log entry
-    if pending.ai_action_log_id:
-        await conn.execute(
-            """
-            UPDATE ai_actions
-            SET user_approved = TRUE,
-                output = $1,
-                success = $2,
-                decision = decision || ' → User confirmed. ' || $3
-            WHERE id = $4
-            """,
-            json.dumps(result),
-            success,
-            f"Result: {'success' if success else 'failed'}",
-            pending.ai_action_log_id,
+    actions_to_execute = pending.actions if pending.actions else [
+        PendingActionItem(
+            tool_name=pending.tool_name,
+            tool_args=pending.tool_args,
+            description=pending.description,
+            ai_action_log_id=pending.ai_action_log_id,
         )
+    ]
 
-    # Feed the tool result back to the LLM
-    tool_response_part = adapter.build_tool_response(
-        tool_name=pending.tool_name,
-        result=result,
-        call_id=None,
-    )
-    tool_content = adapter.build_tool_response_content([tool_response_part])
-    conversation_history.append(tool_content)
+    tool_response_parts = []
+    confirmed_result = None
 
-    # Continue the agent loop to get the LLM's response to the tool result
-    # (It might want to call more tools, e.g., suggest accessories after add_to_cart)
-    remaining_calls = MAX_TOOL_CALLS_PER_TURN - 1  # Used one for the confirmed action
-    tool_calls_count = 1
+    for item in actions_to_execute:
+        result = await _execute_tool(conn, item.tool_name, item.tool_args)
+        success = "error" not in result and result.get("success", True)
 
-    for iteration in range(remaining_calls):
-        try:
-            llm_response = await adapter.call_llm(
-                conversation_history=conversation_history,
-                tool_definitions=TOOL_DEFINITIONS,
-                system_instruction=SYSTEM_PROMPT.format(session_id=session_id),
+        if item.tool_name == "initiate_checkout" or confirmed_result is None:
+            confirmed_result = {"tool_name": item.tool_name, **result}
+
+        # Update existing log entry for gated tools
+        if item.ai_action_log_id:
+            await conn.execute(
+                """
+                UPDATE ai_actions
+                SET user_approved = TRUE,
+                    output = $1,
+                    success = $2,
+                    decision = decision || ' → User confirmed. ' || $3
+                WHERE id = $4
+                """,
+                json.dumps(result),
+                success,
+                f"Result: {'success' if success else 'failed'}",
+                item.ai_action_log_id,
             )
-        except Exception as e:
-            return AgentResponse(
-                type="error",
-                content=f"Something went wrong processing your request. Error: {str(e)}",
-                conversation_history=conversation_history,
-                tool_result=confirmed_result,
-            )
-
-        if llm_response.candidate_content:
-            conversation_history.append(llm_response.candidate_content)
-        elif llm_response.raw_parts:
-            model_content = adapter.build_model_content(llm_response.raw_parts)
-            conversation_history.append(model_content)
-
-        # Text response — done
-        if llm_response.text and not llm_response.tool_calls:
-            return AgentResponse(
-                type="text",
-                content=llm_response.text,
-                conversation_history=conversation_history,
-                tool_result=confirmed_result,
-            )
-
-        if not llm_response.tool_calls:
-            return AgentResponse(
-                type="text",
-                content="Done! Is there anything else I can help you with?",
-                conversation_history=conversation_history,
-                tool_result=confirmed_result,
-            )
-
-        # Process tool calls
-        tool_response_parts = []
-        for tool_call in llm_response.tool_calls:
-            if tool_calls_count >= MAX_TOOL_CALLS_PER_TURN:
-                return AgentResponse(
-                    type="text",
-                    content="I've reached my research limit for this request. Please ask a follow-up if you need more help.",
-                    conversation_history=conversation_history,
-                    tool_result=confirmed_result,
-                    tool_calls_made=tool_calls_count,
-                )
-            tool_calls_count += 1
-            t_name = tool_call.name
-            t_args = dict(tool_call.args) if tool_call.args else {}
-
-            if "session_id" in _get_tool_param_names(t_name):
-                t_args["session_id"] = session_id
-
-            # If another confirmation-gated tool comes up, pause again
-            if t_name in TOOLS_REQUIRING_CONFIRMATION:
-                description = _get_confirmation_description(t_name, t_args)
-                action_id = str(uuid.uuid4())
-
-                ai_log_id = await log_tool_call(
-                    conn=conn,
-                    session_id=session_id,
-                    tool_name=t_name,
-                    tool_input=t_args,
-                    tool_output={"status": "awaiting_confirmation"},
-                    decision=f"Agent wants to {description}. Awaiting user confirmation.",
-                    user_approved=None,
-                    success=True,
-                )
-
-                return AgentResponse(
-                    type="pending_confirmation",
-                    content=f"I'd also like to **{description.lower()}**. Shall I go ahead?",
-                    pending_action=PendingConfirmation(
-                        action_id=action_id,
-                        tool_name=t_name,
-                        tool_args=t_args,
-                        description=description,
-                        ai_action_log_id=ai_log_id,
-                    ),
-                    conversation_history=conversation_history,
-                    tool_result=confirmed_result,
-                )
-
-            # Execute non-gated tool
-            t_result = await _execute_tool(conn, t_name, t_args)
-            t_success = "error" not in t_result
-
+        else:
+            # Non-gated tool that was batched
             await log_tool_call(
                 conn=conn,
                 session_id=session_id,
-                tool_name=t_name,
-                tool_input=t_args,
-                tool_output=t_result,
-                decision=f"Called {t_name} after confirmed action.",
+                tool_name=item.tool_name,
+                tool_input=item.tool_args,
+                tool_output=result,
+                decision=f"Called {item.tool_name} after confirmed action.",
                 user_approved=None,
-                success=t_success,
+                success=success,
             )
 
-            tool_response_parts.append(
-                adapter.build_tool_response(
-                    tool_name=t_name,
-                    result=t_result,
-                    call_id=tool_call.id,
-                )
+        tool_response_parts.append(
+            adapter.build_tool_response(
+                tool_name=item.tool_name,
+                result=result,
+                call_id=item.call_id,
             )
+        )
 
-        if tool_response_parts:
-            tool_content = adapter.build_tool_response_content(tool_response_parts)
-            conversation_history.append(tool_content)
+    # Append all tool responses to history
+    tool_content = adapter.build_tool_response_content(tool_response_parts)
+    conversation_history.append(tool_content)
 
-    return AgentResponse(
-        type="text",
-        content="All done! Let me know if you need anything else.",
+    # Continue the loop
+    return await _run_loop(
         conversation_history=conversation_history,
-        tool_result=confirmed_result,
+        session_id=session_id,
+        conn=conn,
+        adapter=adapter,
+        tool_calls_count=len(actions_to_execute),
+        confirmed_result=confirmed_result,
+        is_chained=True,
     )
 
 
@@ -507,61 +523,68 @@ async def cancel_action(
     adapter: GeminiAdapter,
 ) -> AgentResponse:
     """
-    Handle user cancellation of a confirmation-gated action.
+    Handle user cancellation of confirmation-gated actions.
 
-    Logs the cancellation, feeds a 'cancelled' tool result to the LLM,
-    and gets the agent's response.
+    Logs cancellation to ai_actions, feeds cancellation tool results
+    back to the LLM, and gets the agent's friendly follow-up response.
     """
-    # Update the log entry
-    if pending.ai_action_log_id:
-        await conn.execute(
-            """
-            UPDATE ai_actions
-            SET user_approved = FALSE,
-                output = '{"status": "cancelled_by_user"}'::jsonb,
-                decision = decision || ' → User declined.'
-            WHERE id = $1
-            """,
-            pending.ai_action_log_id,
+    actions_to_cancel = pending.actions if pending.actions else [
+        PendingActionItem(
+            tool_name=pending.tool_name,
+            tool_args=pending.tool_args,
+            description=pending.description,
+            ai_action_log_id=pending.ai_action_log_id,
+        )
+    ]
+
+    tool_response_parts = []
+    for item in actions_to_cancel:
+        if item.ai_action_log_id:
+            await conn.execute(
+                """
+                UPDATE ai_actions
+                SET user_approved = FALSE,
+                    output = '{"status": "cancelled_by_user"}'::jsonb,
+                    decision = decision || ' → User declined.'
+                WHERE id = $1
+                """,
+                item.ai_action_log_id,
+            )
+
+        cancel_result = {
+            "status": "cancelled_by_user",
+            "message": f"The user declined to {item.description.lower()}.",
+        }
+        tool_response_parts.append(
+            adapter.build_tool_response(
+                tool_name=item.tool_name,
+                result=cancel_result,
+                call_id=item.call_id,
+            )
         )
 
-    # Feed cancellation result to LLM
-    cancel_result = {
-        "status": "cancelled_by_user",
-        "message": f"The user declined to {pending.description.lower()}.",
-    }
-    tool_response_part = adapter.build_tool_response(
-        tool_name=pending.tool_name,
-        result=cancel_result,
-        call_id=None,
-    )
-    tool_content = adapter.build_tool_response_content([tool_response_part])
+    tool_content = adapter.build_tool_response_content(tool_response_parts)
     conversation_history.append(tool_content)
 
-    # Get the agent's response to the cancellation
+    # Ask the LLM for a follow-up response
     try:
         llm_response = await adapter.call_llm(
             conversation_history=conversation_history,
             tool_definitions=TOOL_DEFINITIONS,
             system_instruction=SYSTEM_PROMPT.format(session_id=session_id),
         )
-    except Exception as e:
-        return AgentResponse(
-            type="text",
-            content="No problem! Is there anything else I can help you with?",
-            conversation_history=conversation_history,
-        )
-
-    if llm_response.candidate_content:
-        conversation_history.append(llm_response.candidate_content)
-    elif llm_response.raw_parts:
-        model_content = adapter.build_model_content(llm_response.raw_parts)
-        conversation_history.append(model_content)
-
-    text = llm_response.text or "No problem! Let me know if you change your mind or need anything else."
+        if llm_response.candidate_content:
+            conversation_history.append(llm_response.candidate_content)
+        elif llm_response.raw_parts:
+            model_content = adapter.build_model_content(llm_response.raw_parts)
+            conversation_history.append(model_content)
+        text = llm_response.text or "No problem! Let me know if you change your mind or need anything else."
+    except Exception:
+        text = "No problem! Is there anything else I can help you with?"
 
     return AgentResponse(
         type="text",
         content=text,
         conversation_history=conversation_history,
     )
+

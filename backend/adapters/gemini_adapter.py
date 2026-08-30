@@ -175,7 +175,7 @@ class GeminiAdapter:
         """
 
         self.client = genai.Client(api_key=api_key)
-        self.model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         logger.info("GeminiAdapter initialised with model=%s", self.model)
 
     # ----- core inference ---------------------------------------------------
@@ -230,8 +230,8 @@ class GeminiAdapter:
                 return self._parse_response(response)
             except Exception as e:
                 err_str = str(e)
-                if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < 2:
-                    logger.warning("Rate limit hit, retrying in %ds (attempt %d/3)...", 3 * (attempt + 1), attempt + 1)
+                if any(k in err_str for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "RemoteProtocolError")) and attempt < 2:
+                    logger.warning("Temporary Gemini error or rate limit hit, retrying in %ds (attempt %d/3)...", 3 * (attempt + 1), attempt + 1)
                     await asyncio.sleep(3 * (attempt + 1))
                     continue
                 logger.exception("Gemini API call failed")

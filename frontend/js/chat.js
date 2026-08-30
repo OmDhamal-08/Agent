@@ -194,7 +194,7 @@ async function handleConfirm(actionId) {
     } else {
       addMessage('agent', data.content);
 
-      if (pendingAction && pendingAction.tool_name === 'initiate_checkout') {
+      if ((pendingAction && pendingAction.tool_name === 'initiate_checkout') || (data.tool_result && data.tool_result.order_id)) {
         await handleCheckoutConfirmed(data.tool_result || data);
       }
       pendingAction = null;

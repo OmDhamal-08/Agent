@@ -161,8 +161,11 @@ async def confirm_action(
         adapter,
     )
 
-    # Clear the pending action after execution
-    session['pending'] = None
+    # Update pending confirmation if next action was proposed (e.g. checkout after cart)
+    if response.type == 'pending_confirmation':
+        session['pending'] = response.pending_action
+    else:
+        session['pending'] = None
 
     return _to_chat_response(response)
 
@@ -204,8 +207,11 @@ async def cancel_pending_action(
         adapter,
     )
 
-    # Clear the pending action after cancellation
-    session['pending'] = None
+    # Update pending confirmation if next action was proposed
+    if response.type == 'pending_confirmation':
+        session['pending'] = response.pending_action
+    else:
+        session['pending'] = None
 
     return _to_chat_response(response)
 
