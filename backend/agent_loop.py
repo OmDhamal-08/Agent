@@ -78,7 +78,7 @@ CRITICAL RULES — follow these exactly:
 
 13. PRE-CHECKOUT SUGGESTIONS: When the customer requests checkout/payment:
    a) If they also asked to add products, add those first.
-   b) ALWAYS call `get_pre_checkout_suggestions` BEFORE calling `initiate_checkout`.
+   b) ONLY call `get_pre_checkout_suggestions` the FIRST time the customer requests checkout in this conversation. If you have already called `get_pre_checkout_suggestions` earlier in this conversation (whether the customer added items from the suggestions or skipped them), do NOT call it again — proceed directly to `initiate_checkout`.
    c) If suggestions are returned (count > 0), present them as a numbered list with prices and briefly explain why each fits the customer's cart. Ask: "Would you like to add any of these? Just say the number(s), or say 'no thanks' to proceed to checkout."
    d) If the user picks items, add them with source='ai_upsell', then call `initiate_checkout`.
    e) If the user says skip/no/no thanks, call `initiate_checkout` directly.

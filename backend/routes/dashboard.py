@@ -94,6 +94,42 @@ async def dashboard_summary(conn: asyncpg.Connection = Depends(get_db), admin: d
         "SELECT COUNT(*) FROM orders WHERE status = 'failed'"
     )
 
+    # Upsell acceptance rate — from ai_actions audit trail
+    # Every add_to_cart with source='ai_upsell' that went through confirmation
+    upsell_offers_total = await conn.fetchval(
+        """
+        SELECT COUNT(*) FROM ai_actions
+        WHERE tool_name = 'add_to_cart'
+          AND input::text LIKE '%%ai_upsell%%'
+          AND user_approved IS NOT NULL
+        """
+    ) or 0
+    upsell_offers_accepted = await conn.fetchval(
+        """
+        SELECT COUNT(*) FROM ai_actions
+        WHERE tool_name = 'add_to_cart'
+          AND input::text LIKE '%%ai_upsell%%'
+          AND user_approved = true
+        """
+    ) or 0
+    upsell_acceptance_rate = round(
+        (upsell_offers_accepted / upsell_offers_total * 100) if upsell_offers_total > 0 else 0.0, 1
+    )
+
+    # Conversion rate — sessions with agent activity vs sessions with paid orders
+    total_sessions = await conn.fetchval(
+        """
+        SELECT COUNT(DISTINCT session_id) FROM ai_actions
+        WHERE agent_name IS NULL OR agent_name != 'campaign_orchestrator'
+        """
+    ) or 0
+    converting_sessions = await conn.fetchval(
+        "SELECT COUNT(DISTINCT session_id) FROM orders WHERE status = 'paid'"
+    ) or 0
+    conversion_rate = round(
+        (converting_sessions / total_sessions * 100) if total_sessions > 0 else 0.0, 1
+    )
+
     return {
         'total_orders': total_orders,
         'total_revenue': total_revenue,
@@ -104,6 +140,12 @@ async def dashboard_summary(conn: asyncpg.Connection = Depends(get_db), admin: d
         'upsell_accepted_count': upsell['upsell_accepted_count'],
         'upsell_revenue': float(upsell['upsell_revenue']),
         'failed_orders_count': failed,
+        'upsell_acceptance_rate': upsell_acceptance_rate,
+        'upsell_offers_total': upsell_offers_total,
+        'upsell_offers_accepted': upsell_offers_accepted,
+        'conversion_rate': conversion_rate,
+        'total_sessions': total_sessions,
+        'converting_sessions': converting_sessions,
     }
 
 
@@ -205,4 +247,63 @@ async def dashboard_sessions(conn: asyncpg.Connection = Depends(get_db), admin: 
 
     return {
         'sessions': sessions,
+    }
+
+
+# ── GET /api/dashboard/comparison ──────────────────────────────────────────
+
+@router.get('/comparison')
+async def dashboard_comparison(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
+    """AI vs Human side-by-side comparison metrics.
+
+    Splits paid orders by ``ai_assisted`` flag and computes orders count,
+    revenue, AOV, and cross-sell attach rate for each group.
+    """
+    # AI-assisted group
+    ai = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*)                        AS orders,
+            COALESCE(SUM(total), 0)         AS revenue,
+            COUNT(*) FILTER (WHERE upsell_accepted = true) AS cross_sell_count
+        FROM orders
+        WHERE status = 'paid' AND ai_assisted = true
+        """
+    )
+
+    # Organic group
+    organic = await conn.fetchrow(
+        """
+        SELECT
+            COUNT(*)                        AS orders,
+            COALESCE(SUM(total), 0)         AS revenue,
+            COUNT(*) FILTER (WHERE upsell_accepted = true) AS cross_sell_count
+        FROM orders
+        WHERE status = 'paid' AND ai_assisted = false
+        """
+    )
+
+    ai_orders = ai['orders']
+    ai_revenue = float(ai['revenue'])
+    ai_aov = round(ai_revenue / ai_orders, 2) if ai_orders > 0 else 0.0
+    ai_cross_sell = round(ai['cross_sell_count'] / ai_orders * 100, 1) if ai_orders > 0 else 0.0
+
+    org_orders = organic['orders']
+    org_revenue = float(organic['revenue'])
+    org_aov = round(org_revenue / org_orders, 2) if org_orders > 0 else 0.0
+    org_cross_sell = round(organic['cross_sell_count'] / org_orders * 100, 1) if org_orders > 0 else 0.0
+
+    return {
+        'ai': {
+            'orders': ai_orders,
+            'revenue': ai_revenue,
+            'aov': ai_aov,
+            'cross_sell_rate': ai_cross_sell,
+        },
+        'organic': {
+            'orders': org_orders,
+            'revenue': org_revenue,
+            'aov': org_aov,
+            'cross_sell_rate': org_cross_sell,
+        },
     }

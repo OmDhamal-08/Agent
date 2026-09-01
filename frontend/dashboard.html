@@ -224,6 +224,14 @@
           <div class="value success" id="m-upsell-rev">₹0</div>
         </div>
         <div class="metric-card">
+          <div class="label">Upsell Accept Rate</div>
+          <div class="value primary" id="m-upsell-rate">0%</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Conversion Rate</div>
+          <div class="value success" id="m-conversion">0%</div>
+        </div>
+        <div class="metric-card">
           <div class="label">Failed Orders</div>
           <div class="value danger" id="m-failed">0</div>
         </div>
@@ -263,6 +271,35 @@
               <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">No orders yet.</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- ── AI vs Human Comparison ─────────────── -->
+      <div class="panel">
+        <div class="panel-header">🤖 AI vs Human — Side-by-Side Comparison</div>
+        <div class="panel-body" id="comparison-panel">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 16px;">
+            <!-- AI Column -->
+            <div style="background: rgba(99,102,241,0.06); border: 1px solid rgba(99,102,241,0.2); border-radius: 12px; padding: 20px;">
+              <h3 style="margin-bottom: 16px; color: var(--primary); font-size: 1.1rem;">🤖 AI-Assisted</h3>
+              <div style="display: grid; gap: 12px;">
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Orders</span><div style="font-size: 1.3rem; font-weight: 700;" id="cmp-ai-orders">0</div></div>
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Revenue</span><div style="font-size: 1.3rem; font-weight: 700; color: var(--success);" id="cmp-ai-revenue">₹0</div></div>
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Avg Order Value</span><div style="font-size: 1.3rem; font-weight: 700;" id="cmp-ai-aov">₹0</div></div>
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Cross-Sell Rate</span><div style="font-size: 1.3rem; font-weight: 700; color: var(--primary);" id="cmp-ai-cross-sell">0%</div></div>
+              </div>
+            </div>
+            <!-- Organic Column -->
+            <div style="background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.2); border-radius: 12px; padding: 20px;">
+              <h3 style="margin-bottom: 16px; color: var(--text-muted); font-size: 1.1rem;">👤 Organic (Human)</h3>
+              <div style="display: grid; gap: 12px;">
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Orders</span><div style="font-size: 1.3rem; font-weight: 700;" id="cmp-org-orders">0</div></div>
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Revenue</span><div style="font-size: 1.3rem; font-weight: 700; color: var(--success);" id="cmp-org-revenue">₹0</div></div>
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Avg Order Value</span><div style="font-size: 1.3rem; font-weight: 700;" id="cmp-org-aov">₹0</div></div>
+                <div><span style="color: var(--text-muted); font-size: 0.85rem;">Cross-Sell Rate</span><div style="font-size: 1.3rem; font-weight: 700; color: var(--primary);" id="cmp-org-cross-sell">0%</div></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

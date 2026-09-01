@@ -59,6 +59,11 @@ async function loadSummary() {
     if (mUpsells) mUpsells.textContent = data.upsell_accepted_count || 0;
     if (mUpsellRev) mUpsellRev.textContent = formatPrice(data.upsell_revenue || 0);
     if (mFailed) mFailed.textContent = data.failed_orders_count || 0;
+
+    const mUpsellRate = document.getElementById('m-upsell-rate');
+    const mConversion = document.getElementById('m-conversion');
+    if (mUpsellRate) mUpsellRate.textContent = (data.upsell_acceptance_rate || 0) + '%';
+    if (mConversion) mConversion.textContent = (data.conversion_rate || 0) + '%';
   } catch (err) {
     console.error('Failed to load summary:', err);
   }
@@ -227,6 +232,38 @@ function loadFailures(orders) {
   `).join('');
 }
 
+// ── AI vs Human Comparison ─────────────────────
+
+async function loadComparison() {
+  try {
+    const res = await authFetch('/api/dashboard/comparison');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // AI column
+    const aiOrders = document.getElementById('cmp-ai-orders');
+    const aiRevenue = document.getElementById('cmp-ai-revenue');
+    const aiAov = document.getElementById('cmp-ai-aov');
+    const aiCrossSell = document.getElementById('cmp-ai-cross-sell');
+    if (aiOrders) aiOrders.textContent = data.ai?.orders || 0;
+    if (aiRevenue) aiRevenue.textContent = formatPrice(data.ai?.revenue || 0);
+    if (aiAov) aiAov.textContent = formatPrice(data.ai?.aov || 0);
+    if (aiCrossSell) aiCrossSell.textContent = (data.ai?.cross_sell_rate || 0) + '%';
+
+    // Organic column
+    const orgOrders = document.getElementById('cmp-org-orders');
+    const orgRevenue = document.getElementById('cmp-org-revenue');
+    const orgAov = document.getElementById('cmp-org-aov');
+    const orgCrossSell = document.getElementById('cmp-org-cross-sell');
+    if (orgOrders) orgOrders.textContent = data.organic?.orders || 0;
+    if (orgRevenue) orgRevenue.textContent = formatPrice(data.organic?.revenue || 0);
+    if (orgAov) orgAov.textContent = formatPrice(data.organic?.aov || 0);
+    if (orgCrossSell) orgCrossSell.textContent = (data.organic?.cross_sell_rate || 0) + '%';
+  } catch (err) {
+    console.error('Failed to load comparison:', err);
+  }
+}
+
 // ── Global Dashboard Initializer ──────────────
 
 let _refreshInterval = null;
@@ -237,6 +274,7 @@ function initDashboard() {
   loadAiActions();
   loadOrders();
   loadCampaignHistory();
+  loadComparison();
 
   if (_refreshInterval) clearInterval(_refreshInterval);
   _refreshInterval = setInterval(() => {
@@ -247,6 +285,7 @@ function initDashboard() {
       loadAiActions();
       loadOrders();
       loadCampaignHistory();
+      loadComparison();
     }
   }, 30000);
 }
