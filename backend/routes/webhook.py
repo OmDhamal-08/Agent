@@ -68,6 +68,7 @@ _EVENT_HANDLERS: dict[str, Any] = {
 
 
 @router.post("/webhook")
+@router.post("/razorpay-webhook")
 async def razorpay_webhook(
     request: Request, x_razorpay_signature: str | None = Header(None)
 ) -> dict[str, str]:

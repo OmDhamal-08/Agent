@@ -23,10 +23,15 @@ def get_razorpay_client() -> razorpay.Client:
     """Return the lazily-created Razorpay client."""
     global _razorpay_client
     if _razorpay_client is None:
-        key_id = os.getenv("RAZORPAY_KEY_ID")
-        key_secret = os.getenv("RAZORPAY_KEY_SECRET")
+        key_id = (os.getenv("RAZORPAY_KEY_ID") or "").strip()
+        key_secret = (os.getenv("RAZORPAY_KEY_SECRET") or "").strip()
         if not key_id or not key_secret:
-            raise RuntimeError("Razorpay keys not configured")
+            missing = []
+            if not key_id:
+                missing.append("RAZORPAY_KEY_ID")
+            if not key_secret:
+                missing.append("RAZORPAY_KEY_SECRET")
+            raise RuntimeError(f"Razorpay environment variable(s) not set or empty: {', '.join(missing)}")
         _razorpay_client = razorpay.Client(auth=(key_id, key_secret))
     return _razorpay_client
 
@@ -196,7 +201,8 @@ async def create_order(payload: dict[str, Any], conn: asyncpg.Connection = Depen
             )
         except Exception as exc:
             logger.exception("Razorpay order creation failed for order %s", order_id)
-            raise HTTPException(status_code=502, detail="Could not create the payment order") from exc
+            print(f"[ShopMind Razorpay ERROR] Order {order_id} creation failed: {exc}", flush=True)
+            raise HTTPException(status_code=502, detail=f"Could not create the payment order: {exc}") from exc
         razorpay_order_id = rz_order["id"]
         updated = await conn.fetchval(
             """
@@ -216,7 +222,7 @@ async def create_order(payload: dict[str, Any], conn: asyncpg.Connection = Depen
         "razorpay_order_id": razorpay_order_id,
         "amount": amount_paise,
         "currency": "INR",
-        "key_id": os.getenv("RAZORPAY_KEY_ID"),
+        "key_id": (os.getenv("RAZORPAY_KEY_ID") or "").strip(),
     }
 
 
