@@ -1,9 +1,4 @@
-"""
-database.py — asyncpg connection pool lifecycle for FastAPI.
-
-Manages the Supabase Postgres connection pool using FastAPI's lifespan
-context manager. Provides a `get_db()` dependency for acquiring connections.
-"""
+"""asyncpg connection pool lifecycle for FastAPI."""
 
 import os
 import asyncpg
@@ -82,14 +77,19 @@ def get_pool() -> asyncpg.Pool:
 
 
 async def get_db() -> AsyncGenerator[asyncpg.Connection, None]:
-    """
-    FastAPI dependency that yields a connection from the pool.
+    """FastAPI dependency that yields a database connection.
 
-    Usage:
-        @app.get("/example")
-        async def example(conn: asyncpg.Connection = Depends(get_db)):
-            ...
+    Uses the pool when available (local dev with uvicorn).
+    Falls back to a direct connection on serverless cold starts (Vercel).
     """
-    pool = get_pool()
-    async with pool.acquire() as connection:
-        yield connection
+    if _pool is not None:
+        async with _pool.acquire() as connection:
+            yield connection
+    else:
+        if not DATABASE_URL:
+            raise RuntimeError("DATABASE_URL environment variable is not set.")
+        conn = await asyncpg.connect(dsn=DATABASE_URL, statement_cache_size=0)
+        try:
+            yield conn
+        finally:
+            await conn.close()

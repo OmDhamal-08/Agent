@@ -18,9 +18,6 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
-# ──────────────────────────────────────────────
-# Seed data: 25 laptops
-# ──────────────────────────────────────────────
 LAPTOPS = [
     # (name, price, ram_gb, gpu, cpu, use_case[], stock)
     ("Acer Aspire 5 (2024)", 42990, 8, "Intel Iris Xe", "Intel i5-1340P", ["general", "coding"], 15),
@@ -50,9 +47,6 @@ LAPTOPS = [
     ("ASUS ProArt Studiobook 16", 117990, 32, "NVIDIA RTX 4060", "Intel i9-13980HX", ["ml", "video_editing"], 3),
 ]
 
-# ──────────────────────────────────────────────
-# Seed data: 10 accessories
-# ──────────────────────────────────────────────
 ACCESSORIES = [
     # (name, price, category_tag, stock)
     ("Cosmic Byte Equinox Laptop Cooling Pad", 1499, "cooling_pad", 50),
@@ -66,12 +60,6 @@ ACCESSORIES = [
     ("Redgear Shadow Amulet Mechanical Keyboard", 2499, "keyboard", 35),
     ("HyperX Cloud Stinger 2 Gaming Headset", 3499, "headset", 25),
 ]
-
-# ──────────────────────────────────────────────
-# Co-purchase pairings (product_index → accessory_index, count)
-# Indexes refer to position in LAPTOPS / ACCESSORIES lists (0-based).
-# These are built programmatically below based on rules.
-# ──────────────────────────────────────────────
 
 
 def build_co_purchase_pairs() -> list[tuple[int, int, int]]:

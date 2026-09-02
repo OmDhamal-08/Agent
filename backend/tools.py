@@ -15,9 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import asyncpg
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _dec(value: Any) -> float:
     """Convert a Decimal (or numeric) value to a plain float for JSON."""
@@ -41,9 +39,7 @@ def _row_to_product(row: asyncpg.Record) -> Dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# 1. search_products
-# ---------------------------------------------------------------------------
+
 
 async def search_products(
     conn: asyncpg.Connection,
@@ -93,9 +89,7 @@ async def search_products(
     return {"products": products, "count": len(products)}
 
 
-# ---------------------------------------------------------------------------
-# 2. compare_products
-# ---------------------------------------------------------------------------
+
 
 async def compare_products(
     conn: asyncpg.Connection,
@@ -120,9 +114,7 @@ async def compare_products(
     return {"products": products, "count": len(products)}
 
 
-# ---------------------------------------------------------------------------
-# 3. get_cart
-# ---------------------------------------------------------------------------
+
 
 async def get_cart(
     conn: asyncpg.Connection,
@@ -190,9 +182,7 @@ async def get_cart(
     }
 
 
-# ---------------------------------------------------------------------------
-# 4. add_to_cart
-# ---------------------------------------------------------------------------
+
 
 async def add_to_cart(
     conn: asyncpg.Connection,
@@ -260,9 +250,7 @@ async def add_to_cart(
     }
 
 
-# ---------------------------------------------------------------------------
-# 5. get_complementary_products
-# ---------------------------------------------------------------------------
+
 
 async def get_complementary_products(
     conn: asyncpg.Connection,
@@ -314,9 +302,7 @@ async def get_complementary_products(
     }
 
 
-# ---------------------------------------------------------------------------
-# 6. check_customer_owns
-# ---------------------------------------------------------------------------
+
 
 async def check_customer_owns(
     conn: asyncpg.Connection,
@@ -358,9 +344,7 @@ async def check_customer_owns(
     return {"owns": len(items) > 0, "items": items}
 
 
-# ---------------------------------------------------------------------------
-# 7. initiate_checkout
-# ---------------------------------------------------------------------------
+
 
 async def initiate_checkout(
     conn: asyncpg.Connection,
@@ -468,9 +452,7 @@ async def initiate_checkout(
     }
 
 
-# ---------------------------------------------------------------------------
-# 8. remove_from_cart
-# ---------------------------------------------------------------------------
+
 
 async def remove_from_cart(
     conn: asyncpg.Connection,
@@ -520,9 +502,7 @@ async def remove_from_cart(
     }
 
 
-# ---------------------------------------------------------------------------
-# 9. clear_cart
-# ---------------------------------------------------------------------------
+
 
 async def clear_cart(
     conn: asyncpg.Connection,
@@ -552,9 +532,7 @@ async def clear_cart(
     }
 
 
-# ---------------------------------------------------------------------------
-# 10. get_pre_checkout_suggestions
-# ---------------------------------------------------------------------------
+
 
 async def get_pre_checkout_suggestions(
     conn: asyncpg.Connection,
@@ -670,9 +648,7 @@ async def get_pre_checkout_suggestions(
     }
 
 
-# ---------------------------------------------------------------------------
 # Dispatch table
-# ---------------------------------------------------------------------------
 
 TOOL_DISPATCH: Dict[str, Any] = {
     "search_products": search_products,

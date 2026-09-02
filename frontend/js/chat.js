@@ -1,11 +1,8 @@
 /**
  * chat.js — ShopMind AI chat interface logic.
- *
- * Manages conversation state, sends messages to the backend agent,
- * handles confirmation/cancel flows, customer cart recovery, and cart management.
  */
 
-// ── Session management ─────────────────────────
+
 const SESSION_KEY = 'shopmind_session_id';
 
 function getSessionId() {
@@ -24,12 +21,12 @@ function setSessionId(newId) {
   localStorage.setItem(SESSION_KEY, newId);
 }
 
-// ── State ──────────────────────────────────────
+
 let isWaiting = false;
 let pendingAction = null;  // stores the current pending confirmation
 let lastOrderId = null;    // stores the last order_id for checkout flow
 
-// ── DOM helpers ────────────────────────────────
+
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
@@ -93,7 +90,7 @@ function formatMessage(text) {
   return formatted;
 }
 
-// ── Message rendering ──────────────────────────
+
 
 function addMessage(role, content, extra) {
   const msg = document.createElement('div');
@@ -161,7 +158,7 @@ function removeTypingIndicator() {
   if (el) el.remove();
 }
 
-// ── API calls ──────────────────────────────────
+
 
 async function sendMessage() {
   const text = inputEl.value.trim();
@@ -301,7 +298,7 @@ async function handleCancel(actionId) {
   }
 }
 
-// ── Cart management & direct actions ───────────
+
 
 async function refreshCart() {
   try {
@@ -404,7 +401,7 @@ function requestCheckout() {
   sendMessage();
 }
 
-// ── Auth & Identity ────────────────────────────
+
 
 function showEmailModal() {
   const modal = document.getElementById('email-modal');
@@ -505,7 +502,7 @@ function switchAccount() {
   window.location.reload();
 }
 
-// ── Global Keyboard Shortcuts ──────────────────
+
 if (inputEl) {
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -522,7 +519,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Init ───────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', async () => {
   const savedEmail = localStorage.getItem('shopmind_user_email');
   

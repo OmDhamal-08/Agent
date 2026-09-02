@@ -1,11 +1,5 @@
 """Campaign Orchestrator tool functions.
-
-Async PostgreSQL implementations for the three tools the campaign
-orchestrator agent uses to discover abandoned carts, inspect their
-context, and record its decisions.
-
-All functions follow the same ``async func(conn, **kwargs) -> dict``
-pattern established in ``tools.py``.
+Async PostgreSQL implementations for the tools the campaign orchestrator agent uses.
 """
 
 from __future__ import annotations
@@ -18,10 +12,6 @@ import asyncpg
 
 from backend.logging_middleware import log_tool_call
 
-# ──────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────
-
 COOLDOWN_HOURS = 6
 """Minimum hours between nudges for the same session."""
 
@@ -29,20 +19,12 @@ CAMPAIGN_AGENT_NAME = "campaign_orchestrator"
 """Agent name used when logging to ai_actions."""
 
 
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
-
 def _dec(value: Any) -> float:
     """Convert ``Decimal`` to a JSON-safe ``float``."""
     if isinstance(value, Decimal):
         return float(value)
     return value
 
-
-# ──────────────────────────────────────────────
-# Tool 1: find_abandoned_carts
-# ──────────────────────────────────────────────
 
 async def find_abandoned_carts(
     conn: asyncpg.Connection,
@@ -134,10 +116,6 @@ async def find_abandoned_carts(
 
     return {"abandoned_carts": carts, "count": len(carts)}
 
-
-# ──────────────────────────────────────────────
-# Tool 2: get_cart_context
-# ──────────────────────────────────────────────
 
 async def get_cart_context(
     conn: asyncpg.Connection,
@@ -251,10 +229,6 @@ async def get_cart_context(
     }
 
 
-# ──────────────────────────────────────────────
-# Tool 3: record_campaign_decision
-# ──────────────────────────────────────────────
-
 async def record_campaign_decision(
     conn: asyncpg.Connection,
     session_id: str,
@@ -357,10 +331,6 @@ async def record_campaign_decision(
         "success":            True,
     }
 
-
-# ──────────────────────────────────────────────
-# Dispatch registry
-# ──────────────────────────────────────────────
 
 CAMPAIGN_TOOL_DISPATCH: Dict[str, Any] = {
     "find_abandoned_carts":    find_abandoned_carts,

@@ -1,9 +1,4 @@
-"""
-main.py — FastAPI application entry point for ShopMind AI.
-
-Wires together: database pool, route modules, static file serving, and CORS.
-Run with: uvicorn backend.main:app --reload
-"""
+"""FastAPI application entry point for ShopMind AI."""
 
 import os
 from contextlib import asynccontextmanager
@@ -26,9 +21,6 @@ def _cors_origins() -> list[str]:
         return [origin.strip() for origin in configured.split(",") if origin.strip()]
     return ["http://localhost:8000", "http://127.0.0.1:8000"]
 
-# ──────────────────────────────────────────────
-# Lifespan: database pool lifecycle
-# ──────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,10 +32,6 @@ async def lifespan(app: FastAPI):
     await close_pool()
     print("[ShopMind AI] Database pool closed. Goodbye!")
 
-
-# ──────────────────────────────────────────────
-# App setup
-# ──────────────────────────────────────────────
 
 app = FastAPI(
     title="ShopMind AI",
@@ -61,9 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ──────────────────────────────────────────────
-# Register route modules
-# ──────────────────────────────────────────────
 
 from backend.routes.chat import router as chat_router
 from backend.routes.cart import router as cart_router
@@ -86,19 +71,13 @@ app.include_router(session_router)
 app.include_router(campaign_router)
 
 
-# ──────────────────────────────────────────────
-# Health check
-# ──────────────────────────────────────────────
-
 @app.get("/api/health")
 async def health_check():
     """Basic health check endpoint."""
     return {"status": "ok", "service": "shopmind-ai"}
 
 
-# ──────────────────────────────────────────────
-# Dev/Demo-only admin endpoints
-# ──────────────────────────────────────────────
+
 # ⚠️  These are NOT production-safe. They exist solely so that the
 #     Option B failure scenario (out-of-stock) can be triggered live
 #     during a hackathon demo without manual SQL.
@@ -155,11 +134,8 @@ async def restore_stock(
     }
 
 
-# ──────────────────────────────────────────────
-# Static files (frontend)
-# ──────────────────────────────────────────────
-
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
-
-if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+# Static files — only for local dev (Vercel serves frontend via CDN)
+if not os.getenv("VERCEL"):
+    FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+    if FRONTEND_DIR.exists():
+        app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

@@ -24,18 +24,12 @@ from backend.adapters.gemini_adapter import GeminiAdapter
 
 router = APIRouter(prefix='/api', tags=['chat'])
 
-# ---------------------------------------------------------------------------
-# In-memory session store (for hackathon; production would use Redis)
-# ---------------------------------------------------------------------------
 _sessions: dict[str, dict] = {}
 # _sessions[session_id] = {
 #     'history': [...],  # conversation history (Gemini Content objects)
 #     'pending': PendingConfirmation | None
 # }
 
-# ---------------------------------------------------------------------------
-# Singleton GeminiAdapter
-# ---------------------------------------------------------------------------
 _adapter: GeminiAdapter | None = None
 
 
@@ -54,10 +48,6 @@ def get_adapter() -> GeminiAdapter:
     return _adapter
 
 
-# ---------------------------------------------------------------------------
-# Session helpers
-# ---------------------------------------------------------------------------
-
 def _get_session(session_id: str) -> dict:
     """Return the session dict for *session_id*, creating it if needed."""
     if session_id not in _sessions:
@@ -67,10 +57,6 @@ def _get_session(session_id: str) -> dict:
         }
     return _sessions[session_id]
 
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 def _to_chat_response(resp: AgentResponse) -> ChatResponse:
     """Convert an internal AgentResponse dataclass to a Pydantic ChatResponse."""

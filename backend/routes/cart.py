@@ -1,14 +1,6 @@
 """
 cart.py — Cart API routes for the ShopMind AI frontend.
-
-Provides:
-- GET /api/cart — Retrieve cart contents for a session
-- DELETE /api/cart/item — Remove a single item directly from the UI
-- DELETE /api/cart — Empty the entire cart directly from the UI
-
-All direct UI cart modifications are recorded to the ai_actions audit trail
-with agent_name='user_direct' to maintain full visibility between AI-driven
-and manual user actions.
+All direct UI cart modifications are recorded to the ai_actions audit trail.
 """
 
 from typing import Optional
@@ -23,8 +15,6 @@ from backend.tools import get_cart, remove_from_cart, clear_cart
 router = APIRouter(prefix="/api", tags=["cart"])
 
 
-# ── Request Models ─────────────────────────────
-
 class RemoveItemRequest(BaseModel):
     session_id: str
     product_id: int
@@ -34,8 +24,6 @@ class ClearCartRequest(BaseModel):
     session_id: str
 
 
-# ── GET /api/cart ──────────────────────────────
-
 @router.get("/cart")
 async def api_get_cart(
     session_id: str = Query(..., description="Shopping session ID"),
@@ -44,8 +32,6 @@ async def api_get_cart(
     """Get the current cart contents for a session."""
     return await get_cart(conn, session_id)
 
-
-# ── DELETE /api/cart/item ──────────────────────
 
 @router.delete("/cart/item")
 async def api_remove_cart_item(
@@ -87,8 +73,6 @@ async def api_remove_cart_item(
 
     return result
 
-
-# ── DELETE /api/cart ───────────────────────────
 
 @router.delete("/cart")
 async def api_clear_cart(

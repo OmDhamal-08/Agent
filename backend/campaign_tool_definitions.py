@@ -1,26 +1,11 @@
 """
 campaign_tool_definitions.py
-=============================
 Provider-agnostic JSON tool definitions for the Campaign Orchestrator agent.
-
-Follows the same JSON-Schema convention used by ``tool_definitions.py``
-so the definitions can be converted to any LLM provider format via the
-adapter layer.
-
-Exports
--------
-CAMPAIGN_TOOL_DEFINITIONS : list[dict]
-    Complete schema for the three tools the campaign agent may invoke.
 """
 
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Tool schemas
-# ---------------------------------------------------------------------------
-
 CAMPAIGN_TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    # 1. find_abandoned_carts
     {
         "name": "find_abandoned_carts",
         "description": (
@@ -51,7 +36,6 @@ CAMPAIGN_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
-    # 2. get_cart_context
     {
         "name": "get_cart_context",
         "description": (
@@ -70,7 +54,6 @@ CAMPAIGN_TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     },
-    # 3. record_campaign_decision
     {
         "name": "record_campaign_decision",
         "description": (

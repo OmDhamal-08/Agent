@@ -1,17 +1,10 @@
 """
 campaign_agent.py — Campaign Orchestrator batch reasoning loop.
-
-A proactive agent that scans for abandoned carts and uses LLM reasoning
-to decide whether/how to send recovery nudges.  Unlike the reactive chat
-agent (agent_loop.py), this runs as a batch process — no conversation,
-no confirmation gating — but follows the same tool-calling and logging
-patterns so every decision is auditable.
-
-Usage:
-    result = await run_campaign_scan(conn, adapter)
+A proactive agent that scans for abandoned carts and uses LLM reasoning to decide whether/how to send recovery nudges.
 """
 
 from __future__ import annotations
+
 
 import json
 import logging
@@ -31,10 +24,6 @@ from backend.campaign_tools import (
 from backend.logging_middleware import log_tool_call
 
 logger = logging.getLogger(__name__)
-
-# ──────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────
 
 MAX_CARTS_PER_RUN = 20
 """Maximum number of abandoned carts to evaluate per orchestrator run."""
@@ -96,10 +85,6 @@ CART INFORMATION:
 {cart_context}
 """
 
-
-# ──────────────────────────────────────────────
-# Core orchestrator logic
-# ──────────────────────────────────────────────
 
 async def _evaluate_single_cart(
     conn: asyncpg.Connection,
@@ -297,10 +282,6 @@ async def _evaluate_single_cart(
         **result,
     }
 
-
-# ──────────────────────────────────────────────
-# Public entry point
-# ──────────────────────────────────────────────
 
 async def run_campaign_scan(
     conn: asyncpg.Connection,

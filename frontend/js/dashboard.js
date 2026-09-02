@@ -25,7 +25,7 @@ function truncate(str, max = 60) {
   return str.length > max ? str.substring(0, max) + '…' : str;
 }
 
-// ── Load business metrics ──────────────────────
+
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -69,7 +69,7 @@ async function loadSummary() {
   }
 }
 
-// ── Load sessions for selector ─────────────────
+
 
 async function loadSessions() {
   try {
@@ -97,7 +97,7 @@ async function loadSessions() {
   }
 }
 
-// ── Load AI Decision Trace ─────────────────────
+
 
 async function loadAiActions() {
   try {
@@ -161,7 +161,7 @@ async function loadAiActions() {
   }
 }
 
-// ── Load Orders Table ──────────────────────────
+
 
 async function loadOrders() {
   try {
@@ -204,7 +204,7 @@ async function loadOrders() {
   }
 }
 
-// ── Load Failures Panel ────────────────────────
+
 
 function loadFailures(orders) {
   const container = document.getElementById('failures-list');
@@ -232,7 +232,7 @@ function loadFailures(orders) {
   `).join('');
 }
 
-// ── AI vs Human Comparison ─────────────────────
+
 
 async function loadComparison() {
   try {
@@ -264,7 +264,7 @@ async function loadComparison() {
   }
 }
 
-// ── Global Dashboard Initializer ──────────────
+
 
 let _refreshInterval = null;
 
@@ -290,7 +290,7 @@ function initDashboard() {
   }, 30000);
 }
 
-// ── Campaign Orchestrator ─────────────────────
+
 
 async function loadCampaignHistory() {
   try {

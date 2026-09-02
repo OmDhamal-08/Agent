@@ -16,13 +16,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Configuration ──────────────────────────────
+
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 
-# ── Password hashing (using bcrypt directly) ──
+
 
 def hash_password(plain: str) -> str:
     """Hash a plaintext password using bcrypt."""
@@ -39,7 +39,7 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-# ── JWT tokens ─────────────────────────────────
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a signed JWT access token.
@@ -76,7 +76,7 @@ def decode_access_token(token: str) -> dict:
     return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
 
 
-# ── FastAPI dependency ─────────────────────────
+
 
 async def get_current_admin(request: Request) -> dict:
     """FastAPI dependency that validates the admin JWT token.

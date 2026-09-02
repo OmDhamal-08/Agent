@@ -1,9 +1,6 @@
 """
 Gemini-specific adapter for the ShopMind AI agent.
-
-Converts neutral tool definitions to Gemini's FunctionDeclaration format,
-manages LLM API calls via the modern google-genai SDK, and provides
-helper methods for constructing conversation history entries.
+Converts neutral tool definitions and manages LLM API calls.
 """
 
 import asyncio
@@ -17,11 +14,6 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
 @dataclass
 class ToolCall:
     """Represents a single tool/function call requested by the model."""
@@ -33,49 +25,15 @@ class ToolCall:
 
 @dataclass
 class LLMResponse:
-    """Structured response returned from the Gemini LLM.
-
-    Attributes:
-        text: The textual reply from the model, if any.
-        tool_calls: A list of tool calls the model wants to invoke.
-        raw_parts: The raw ``types.Part`` objects from the response; kept
-            so that the caller can faithfully reconstruct the model turn
-            when appending to conversation history.
-    """
+    """Structured response returned from the Gemini LLM."""
 
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_parts: list = field(default_factory=list)
     candidate_content: Any = None
 
-
-# ---------------------------------------------------------------------------
-# Tool-definition conversion
-# ---------------------------------------------------------------------------
-
 def convert_tool_definitions(tool_defs: list[dict]) -> list[types.Tool]:
-    """Convert neutral JSON tool definitions to Gemini ``types.Tool`` objects.
-
-    Each neutral definition is expected to follow the shape emitted by
-    ``tool_definitions.py``::
-
-        {
-            "name": "...",
-            "description": "...",
-            "parameters": {  # JSON-Schema style
-                "type": "object",
-                "properties": { ... },
-                "required": [ ... ]
-            }
-        }
-
-    Args:
-        tool_defs: A list of neutral tool definition dictionaries.
-
-    Returns:
-        A list containing a single ``types.Tool`` that wraps all the
-        converted ``FunctionDeclaration`` objects.
-    """
+    """Convert neutral JSON tool definitions to Gemini ``types.Tool`` objects."""
 
     declarations: list[types.FunctionDeclaration] = []
 
@@ -98,20 +56,7 @@ def convert_tool_definitions(tool_defs: list[dict]) -> list[types.Tool]:
 
 
 def _convert_schema(schema_dict: dict) -> dict[str, Any]:
-    """Recursively convert a JSON-Schema dict into a form accepted by Gemini.
-
-    The google-genai SDK accepts plain dicts that mirror the
-    ``google.genai.types.Schema`` structure.  This helper normalises common
-    JSON-Schema patterns (``type``, ``properties``, ``items``, ``enum``,
-    ``required``) into that shape.
-
-    Args:
-        schema_dict: A JSON-Schema-style dictionary.
-
-    Returns:
-        A dict suitable for use as a ``parameters`` value in a
-        ``FunctionDeclaration``.
-    """
+    """Recursively convert a JSON-Schema dict into a form accepted by Gemini."""
 
     result: dict[str, Any] = {}
 
@@ -152,19 +97,8 @@ def _convert_schema(schema_dict: dict) -> dict[str, Any]:
 
     return result
 
-
-# ---------------------------------------------------------------------------
-# GeminiAdapter
-# ---------------------------------------------------------------------------
-
 class GeminiAdapter:
-    """Adapter that wraps the Google Gemini (``google-genai``) SDK.
-
-    Responsibilities:
-    * Convert neutral tool definitions to Gemini format.
-    * Perform LLM inference and parse the response into an ``LLMResponse``.
-    * Provide static helpers for building conversation-history entries.
-    """
+    """Adapter that wraps the Google Gemini (``google-genai``) SDK."""
 
     def __init__(self, api_key: str, model: str | None = None) -> None:
         """Initialise the adapter.
@@ -177,8 +111,6 @@ class GeminiAdapter:
         self.client = genai.Client(api_key=api_key)
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         logger.info("GeminiAdapter initialised with model=%s", self.model)
-
-    # ----- core inference ---------------------------------------------------
 
     async def call_llm(
         self,
@@ -237,19 +169,9 @@ class GeminiAdapter:
                 logger.exception("Gemini API call failed")
                 raise
 
-    # ----- response parsing -------------------------------------------------
-
     @staticmethod
     def _parse_response(response: Any) -> LLMResponse:
-        """Parse a Gemini ``GenerateContentResponse`` into an ``LLMResponse``.
-
-        Args:
-            response: The raw response object returned by
-                ``models.generate_content``.
-
-        Returns:
-            A populated ``LLMResponse``.
-        """
+        """Parse a Gemini ``GenerateContentResponse`` into an ``LLMResponse``."""
 
         # Extract raw parts and candidate_content for history reconstruction
         raw_parts: list = []
@@ -291,18 +213,9 @@ class GeminiAdapter:
             candidate_content=candidate_content,
         )
 
-    # ----- static helpers for history construction --------------------------
-
     @staticmethod
     def build_user_message(text: str) -> types.Content:
-        """Create a ``user`` role content entry.
-
-        Args:
-            text: The user's message text.
-
-        Returns:
-            A ``types.Content`` with role ``'user'``.
-        """
+        """Create a ``user`` role content entry."""
 
         return types.Content(
             role="user",
@@ -315,16 +228,7 @@ class GeminiAdapter:
         result: dict,
         call_id: str | None = None,
     ) -> types.Part:
-        """Create a function-response part for a single tool result.
-
-        Args:
-            tool_name: The name of the function that was called.
-            result: The result dictionary to return to the model.
-            call_id: Optional call identifier (reserved for future use).
-
-        Returns:
-            A ``types.Part`` representing the function response.
-        """
+        """Create a function-response part for a single tool result."""
 
         return types.Part.from_function_response(
             name=tool_name,
@@ -333,34 +237,12 @@ class GeminiAdapter:
 
     @staticmethod
     def build_tool_response_content(parts: list) -> types.Content:
-        """Wrap one or more tool-response parts in a ``user`` role content.
-
-        Note: Some Gemini model versions do not support ``role='tool'``.
-        Using ``role='user'`` with function-response parts is compatible
-        across all model versions.
-
-        Args:
-            parts: A list of ``types.Part`` objects (typically created by
-                ``build_tool_response``).
-
-        Returns:
-            A ``types.Content`` with role ``'user'`` containing function responses.
-        """
+        """Wrap one or more tool-response parts in a ``user`` role content."""
 
         return types.Content(role="user", parts=parts)
 
     @staticmethod
     def build_model_content(parts: list) -> types.Content:
-        """Reconstruct a ``model`` role content from raw parts.
-
-        Use this to re-add the model's turn (including any function-call
-        parts) to the conversation history after processing.
-
-        Args:
-            parts: The ``raw_parts`` from an ``LLMResponse``.
-
-        Returns:
-            A ``types.Content`` with role ``'model'``.
-        """
+        """Reconstruct a ``model`` role content from raw parts."""
 
         return types.Content(role="model", parts=parts)

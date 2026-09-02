@@ -34,7 +34,7 @@ async function authFetch(url, options = {}) {
   return response;
 }
 
-// ── View Switching ────────────────────────────
+
 
 function showAuthView() {
   const authContainer = document.getElementById('auth-container');
@@ -77,7 +77,7 @@ function toggleAuthMode(mode) {
   }
 }
 
-// ── Auth Actions ──────────────────────────────
+
 
 async function handleLogin(e) {
   if (e) e.preventDefault();
@@ -210,7 +210,7 @@ function handleLogout() {
   showAuthView();
 }
 
-// ── Startup Check ─────────────────────────────
+
 
 async function checkAdminAuth() {
   const token = sessionStorage.getItem(ADMIN_TOKEN_KEY);

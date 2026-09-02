@@ -1,13 +1,6 @@
 """
 agent_loop.py — Core agent loop for ShopMind AI.
-
-This module implements the LLM agent loop: given a user message and
-conversation history, it calls the LLM, dispatches tool calls, handles
-confirmation gating, logs every action, and repeats until the LLM
-produces a final text response.
-
-The loop is provider-agnostic — it delegates LLM calls to an adapter
-(e.g., GeminiAdapter) and tool execution to the TOOL_DISPATCH registry.
+Handles LLM interaction, tool dispatch, and confirmation gating.
 """
 
 from __future__ import annotations
@@ -24,9 +17,7 @@ from backend.logging_middleware import log_tool_call
 from backend.tool_definitions import TOOL_DEFINITIONS, TOOLS_REQUIRING_CONFIRMATION
 from backend.tools import TOOL_DISPATCH
 
-# ──────────────────────────────────────────────
-# Constants
-# ──────────────────────────────────────────────
+
 
 MAX_TOOL_CALLS_PER_TURN = 10
 
@@ -93,9 +84,7 @@ CRITICAL RULES — follow these exactly:
 """
 
 
-# ──────────────────────────────────────────────
-# Data classes
-# ──────────────────────────────────────────────
+
 
 @dataclass
 class PendingActionItem:
@@ -129,9 +118,7 @@ class AgentResponse:
     tool_result: Optional[dict] = None  # Result from a confirmed tool execution
 
 
-# ──────────────────────────────────────────────
-# Helper: execute a tool
-# ──────────────────────────────────────────────
+
 
 async def _execute_tool(
     conn: asyncpg.Connection,
@@ -217,9 +204,7 @@ def _get_tool_param_names(tool_name: str) -> set:
     return set()
 
 
-# ──────────────────────────────────────────────
-# Core unified agent loop
-# ──────────────────────────────────────────────
+
 
 async def _run_loop(
     conversation_history: list,
@@ -407,9 +392,7 @@ async def _run_loop(
     )
 
 
-# ──────────────────────────────────────────────
-# Main agent loop
-# ──────────────────────────────────────────────
+
 
 async def run_agent(
     user_message: str,
@@ -438,9 +421,7 @@ async def run_agent(
     )
 
 
-# ──────────────────────────────────────────────
-# Confirmation handling
-# ──────────────────────────────────────────────
+
 
 async def execute_confirmed_action(
     pending: PendingConfirmation,

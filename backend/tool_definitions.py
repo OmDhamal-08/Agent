@@ -1,21 +1,4 @@
-"""
-tool_definitions.py
-====================
-Provider-agnostic JSON tool definitions for the ShopMind AI shopping assistant.
-
-Each tool is described as a plain dict following the JSON Schema convention so
-it can be trivially adapted to OpenAI function-calling, Anthropic tool-use,
-Google Gemini, or any other LLM provider.
-
-Exports
--------
-TOOL_DEFINITIONS : list[dict]
-    Complete schema for every tool the agent may invoke.
-TOOLS_REQUIRING_CONFIRMATION : dict[str, str]
-    Maps tool names that mutate state to a human-readable template
-    describing the action.  Templates may contain ``{product_name}``
-    and ``{quantity}`` placeholders for runtime interpolation.
-"""
+"""Provider-agnostic JSON tool definitions for the ShopMind AI shopping assistant."""
 
 from typing import Any
 
@@ -24,7 +7,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    # 1. search_products
+
     {
         "name": "search_products",
         "description": (
@@ -63,7 +46,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
     },
-    # 2. compare_products
+
     {
         "name": "compare_products",
         "description": (
@@ -81,7 +64,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["product_ids"],
         },
     },
-    # 3. get_cart
+
     {
         "name": "get_cart",
         "description": (
@@ -98,7 +81,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     },
-    # 4. add_to_cart
+
     {
         "name": "add_to_cart",
         "description": (
@@ -133,7 +116,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id", "product_id", "source"],
         },
     },
-    # 5. get_complementary_products
+
     {
         "name": "get_complementary_products",
         "description": (
@@ -151,7 +134,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["product_id"],
         },
     },
-    # 6. check_customer_owns
+
     {
         "name": "check_customer_owns",
         "description": (
@@ -177,7 +160,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id", "category"],
         },
     },
-    # 7. initiate_checkout
+
     {
         "name": "initiate_checkout",
         "description": (
@@ -195,7 +178,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     },
-    # 8. remove_from_cart
+
     {
         "name": "remove_from_cart",
         "description": (
@@ -216,7 +199,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id", "product_id"],
         },
     },
-    # 9. clear_cart
+
     {
         "name": "clear_cart",
         "description": (
@@ -233,7 +216,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     },
-    # 10. get_pre_checkout_suggestions
+
     {
         "name": "get_pre_checkout_suggestions",
         "description": (
@@ -263,10 +246,4 @@ TOOLS_REQUIRING_CONFIRMATION: dict[str, str] = {
     "add_to_cart": "Add {product_name} (×{quantity}) to your cart",
     "initiate_checkout": "Proceed to checkout and payment",
 }
-"""
-Tools whose execution must be preceded by an explicit user confirmation step.
 
-Values are human-readable action descriptions.  Use ``str.format()`` /
-``str.format_map()`` at runtime to interpolate context-specific placeholders
-such as ``{product_name}`` and ``{quantity}``.
-"""

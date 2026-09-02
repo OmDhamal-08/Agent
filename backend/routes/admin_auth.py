@@ -27,8 +27,6 @@ router = APIRouter(prefix="/api/admin", tags=["admin-auth"])
 ADMIN_SIGNUP_CODE = os.getenv("ADMIN_SIGNUP_CODE", "")
 
 
-# ── Request / response models ─────────────────
-
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str
@@ -39,8 +37,6 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-
-# ── POST /api/admin/signup ─────────────────────
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 async def admin_signup(
@@ -95,8 +91,6 @@ async def admin_signup(
     }
 
 
-# ── POST /api/admin/login ──────────────────────
-
 @router.post("/login")
 async def admin_login(
     body: LoginRequest,
@@ -128,8 +122,6 @@ async def admin_login(
         "expires_in": f"{JWT_EXPIRE_HOURS}h",
     }
 
-
-# ── GET /api/admin/me ──────────────────────────
 
 @router.get("/me")
 async def admin_me(admin: dict = Depends(get_current_admin)):

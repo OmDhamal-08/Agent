@@ -50,3 +50,6 @@ logs/
 # Agentic / Gemini / Antigravity internal metadata
 .gemini/
 .antigravity/
+
+# Vercel
+.vercel/

@@ -19,10 +19,6 @@ from backend.database import get_db
 
 router = APIRouter(prefix='/api/campaigns', tags=['campaigns'])
 
-# ──────────────────────────────────────────────
-# Singleton GeminiAdapter (same pattern as chat.py)
-# ──────────────────────────────────────────────
-
 _adapter: GeminiAdapter | None = None
 
 
@@ -37,10 +33,6 @@ def _get_adapter() -> GeminiAdapter:
     return _adapter
 
 
-# ──────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────
-
 def _serialize(value: Any) -> Any:
     """Convert non-JSON-serializable types to JSON-safe equivalents."""
     if isinstance(value, Decimal):
@@ -54,10 +46,6 @@ def _serialize_row(row: dict) -> dict:
     """Apply ``_serialize`` to every value in a row dict."""
     return {k: _serialize(v) for k, v in row.items()}
 
-
-# ──────────────────────────────────────────────
-# POST /api/campaigns/run
-# ──────────────────────────────────────────────
 
 @router.post('/run')
 async def trigger_campaign_scan(
@@ -88,10 +76,6 @@ async def trigger_campaign_scan(
         "decisions":     serialized_decisions,
     }
 
-
-# ──────────────────────────────────────────────
-# GET /api/campaigns/history
-# ──────────────────────────────────────────────
 
 @router.get('/history')
 async def campaign_history(

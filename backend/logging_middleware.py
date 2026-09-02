@@ -1,9 +1,4 @@
-"""AI Actions audit trail logging middleware.
-
-Provides functions to log, update, and query tool calls made by the
-ShopMind agent.  Every tool invocation flows through `log_tool_call`
-so the dashboard can display a complete decision history.
-"""
+"""AI Actions audit trail logging middleware."""
 
 import json
 from typing import Any
@@ -22,25 +17,7 @@ async def log_tool_call(
     success: bool,
     agent_name: str = "shopmind_v1",
 ) -> int:
-    """Log a tool call to the ai_actions audit trail.
-
-    Args:
-        conn: Database connection.
-        session_id: The shopping session ID.
-        tool_name: Name of the tool called.
-        tool_input: The arguments passed to the tool.
-        tool_output: The result returned by the tool.
-        decision: The agent's reasoning for making this call.
-        user_approved: True if user confirmed, False if rejected,
-                       None if no confirmation was needed.
-        success: Whether the tool call succeeded.
-        agent_name: Identifier for the agent making this call.
-                    Defaults to ``'shopmind_v1'`` (chat agent).
-                    Use ``'campaign_orchestrator'`` for campaign actions.
-
-    Returns:
-        The ID of the created ai_actions row.
-    """
+    """Log a tool call to the ai_actions audit trail."""
     row = await conn.fetchrow(
         """
         INSERT INTO ai_actions
@@ -67,18 +44,7 @@ async def log_confirmation_result(
     approved: bool,
     decision: str | None = None,
 ) -> None:
-    """Update an existing ai_actions row with the user's confirmation result.
-
-    When a tool call requires explicit user approval (e.g. placing an order),
-    this function records the outcome once the user responds.
-
-    Args:
-        conn: Database connection.
-        action_id: The ID of the ai_actions row to update.
-        approved: Whether the user approved the action.
-        decision: Optional additional reasoning to append to the
-                  existing decision text.
-    """
+    """Update an existing ai_actions row with the user's confirmation result."""
     if decision is not None:
         await conn.execute(
             """
@@ -108,21 +74,7 @@ async def get_session_actions(
     session_id: str | None = None,
     limit: int = 100,
 ) -> list[dict]:
-    """Return ai_actions rows, optionally filtered by session.
-
-    Used by the admin dashboard to display a chronological audit trail
-    of every decision the agent made.
-
-    Args:
-        conn: Database connection.
-        session_id: If provided, only return actions for this session.
-                    If ``None``, return actions across all sessions.
-        limit: Maximum number of rows to return (default 100).
-
-    Returns:
-        A list of dicts, each representing one ai_actions row,
-        ordered by timestamp descending (most recent first).
-    """
+    """Return ai_actions rows, optionally filtered by session."""
     if session_id is not None:
         rows = await conn.fetch(
             """

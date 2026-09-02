@@ -37,8 +37,6 @@ def _serialize_row(row: dict) -> dict:
     return {k: _serialize(v) for k, v in row.items()}
 
 
-# ── GET /api/dashboard/summary ──────────────────────────────────────────────
-
 @router.get('/summary')
 async def dashboard_summary(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
     """Business impact metrics.
@@ -149,8 +147,6 @@ async def dashboard_summary(conn: asyncpg.Connection = Depends(get_db), admin: d
     }
 
 
-# ── GET /api/dashboard/ai-actions ───────────────────────────────────────────
-
 @router.get('/ai-actions')
 async def dashboard_ai_actions(
     session_id: str | None = Query(None, description="Filter by session ID"),
@@ -184,8 +180,6 @@ async def dashboard_ai_actions(
         'count': len(serialized),
     }
 
-
-# ── GET /api/dashboard/orders ──────────────────────────────────────────────
 
 @router.get('/orders')
 async def dashboard_orders(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
@@ -221,8 +215,6 @@ async def dashboard_orders(conn: asyncpg.Connection = Depends(get_db), admin: di
     }
 
 
-# ── GET /api/dashboard/sessions ────────────────────────────────────────────
-
 @router.get('/sessions')
 async def dashboard_sessions(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
     """List unique shopping sessions.
@@ -249,8 +241,6 @@ async def dashboard_sessions(conn: asyncpg.Connection = Depends(get_db), admin: 
         'sessions': sessions,
     }
 
-
-# ── GET /api/dashboard/comparison ──────────────────────────────────────────
 
 @router.get('/comparison')
 async def dashboard_comparison(conn: asyncpg.Connection = Depends(get_db), admin: dict = Depends(get_current_admin)):
