@@ -88,7 +88,11 @@ async def get_db() -> AsyncGenerator[asyncpg.Connection, None]:
     else:
         if not DATABASE_URL:
             raise RuntimeError("DATABASE_URL environment variable is not set.")
-        conn = await asyncpg.connect(dsn=DATABASE_URL, statement_cache_size=0)
+        conn = await asyncpg.connect(
+            dsn=DATABASE_URL,
+            statement_cache_size=0,
+            timeout=10,
+        )
         try:
             yield conn
         finally:

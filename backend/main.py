@@ -24,13 +24,22 @@ def _cors_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage the database connection pool lifecycle."""
-    print("[ShopMind AI] Starting server...")
-    pool = await create_pool()
-    print(f"[ShopMind AI] Database pool created (min=2, max=10)")
-    yield
-    await close_pool()
-    print("[ShopMind AI] Database pool closed. Goodbye!")
+    """Manage the database connection pool lifecycle.
+
+    On Vercel serverless the pool is skipped — ``get_db()`` already falls
+    back to a per-request direct connection when *_pool* is ``None``.
+    """
+    if os.getenv("VERCEL"):
+        # Serverless: skip pool creation (get_db handles direct connections)
+        print("[ShopMind AI] Running on Vercel serverless — skipping pool.")
+        yield
+    else:
+        print("[ShopMind AI] Starting server...")
+        pool = await create_pool()
+        print(f"[ShopMind AI] Database pool created (min=2, max=10)")
+        yield
+        await close_pool()
+        print("[ShopMind AI] Database pool closed. Goodbye!")
 
 
 app = FastAPI(
