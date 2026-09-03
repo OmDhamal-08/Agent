@@ -1,11 +1,11 @@
 """Vercel serverless entry point — re-exports the FastAPI app."""
 
 # ── pkg_resources shim ────────────────────────────────────────────────
-# razorpay==1.4.2 does `import pkg_resources` at the top level.
+# razorpay does `import pkg_resources` at the top level.
 # Python 3.12 removed setuptools from the stdlib, and Vercel's uv-based
-# runtime doesn't always vendor it.  This shim provides the one function
-# razorpay actually uses (get_distribution) via importlib.metadata so the
-# import succeeds without setuptools.
+# runtime doesn't always vendor it.  This shim provides the functions
+# razorpay actually uses (get_distribution, require) via importlib.metadata
+# so the import succeeds without setuptools.
 import sys
 
 if "pkg_resources" not in sys.modules:
@@ -20,11 +20,22 @@ if "pkg_resources" not in sys.modules:
         class _DistShim:
             """Minimal shim returned by get_distribution()."""
             def __init__(self, name):
-                self._dist = importlib.metadata.distribution(name)
+                # Strip version specifiers (e.g. 'razorpay>=1.0' → 'razorpay')
+                clean = name.split(">=")[0].split("<=")[0].split("==")[0]
+                clean = clean.split("!=")[0].split("<")[0].split(">")[0].strip()
+                self._dist = importlib.metadata.distribution(clean)
                 self.version = self._dist.version
-                self.project_name = name
+                self.project_name = clean
+
+        def _require(*requirements):
+            """Minimal shim for pkg_resources.require()."""
+            result = []
+            for req in requirements:
+                result.append(_DistShim(req))
+            return result
 
         _mod.get_distribution = _DistShim  # callable(name) → obj with .version
+        _mod.require = _require            # callable(*names) → list of dist shims
         _mod.DistributionNotFound = importlib.metadata.PackageNotFoundError
         sys.modules["pkg_resources"] = _mod
 # ── end shim ──────────────────────────────────────────────────────────

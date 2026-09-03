@@ -9,6 +9,7 @@ in the ``session_state`` database table so that it survives across Vercel
 serverless cold starts.
 """
 
+import base64
 import json
 import os
 import logging
@@ -58,45 +59,87 @@ def get_adapter() -> GeminiAdapter:
 # ---------------------------------------------------------------------------
 
 def _serialize_part(part: types.Part) -> dict[str, Any]:
-    """Convert a single ``types.Part`` to a JSON-safe dict."""
+    """Convert a single ``types.Part`` to a JSON-safe dict.
+
+    Preserves ``thought`` and ``thought_signature`` metadata that the
+    Gemini API requires on function-call parts from thinking models.
+    """
+    data: dict[str, Any] = {}
+
     if part.text is not None:
-        return {"type": "text", "text": part.text}
-    if part.function_call is not None:
-        return {
-            "type": "function_call",
-            "name": part.function_call.name,
-            "args": dict(part.function_call.args) if part.function_call.args else {},
-            "id": getattr(part.function_call, "id", None),
-        }
-    if part.function_response is not None:
-        return {
-            "type": "function_response",
-            "name": part.function_response.name,
-            "response": dict(part.function_response.response) if part.function_response.response else {},
-            "id": getattr(part.function_response, "id", None),
-        }
-    return {"type": "text", "text": ""}
+        data["type"] = "text"
+        data["text"] = part.text
+    elif part.function_call is not None:
+        data["type"] = "function_call"
+        data["name"] = part.function_call.name
+        data["args"] = dict(part.function_call.args) if part.function_call.args else {}
+        fc_id = getattr(part.function_call, "id", None)
+        if fc_id is not None:
+            data["id"] = fc_id
+    elif part.function_response is not None:
+        data["type"] = "function_response"
+        data["name"] = part.function_response.name
+        data["response"] = dict(part.function_response.response) if part.function_response.response else {}
+    else:
+        data["type"] = "text"
+        data["text"] = ""
+
+    # Preserve thinking-model metadata (required by Gemini API)
+    thought = getattr(part, "thought", None)
+    if thought is not None:
+        data["thought"] = thought
+
+    thought_sig = getattr(part, "thought_signature", None)
+    if thought_sig is not None:
+        if isinstance(thought_sig, bytes):
+            data["thought_signature"] = base64.b64encode(thought_sig).decode("ascii")
+        else:
+            data["thought_signature"] = str(thought_sig)
+
+    return data
 
 
 def _deserialize_part(data: dict[str, Any]) -> types.Part:
-    """Reconstruct a ``types.Part`` from a serialised dict."""
+    """Reconstruct a ``types.Part`` from a serialised dict.
+
+    Restores ``thought`` and ``thought_signature`` metadata required by
+    the Gemini API for thinking-model conversation history.
+    """
     ptype = data.get("type", "text")
+
+    # Prepare thinking-model metadata kwargs
+    thought_kwargs: dict[str, Any] = {}
+    if "thought" in data and data["thought"] is not None:
+        thought_kwargs["thought"] = data["thought"]
+    if "thought_signature" in data and data["thought_signature"] is not None:
+        sig = data["thought_signature"]
+        if isinstance(sig, str):
+            thought_kwargs["thought_signature"] = base64.b64decode(sig)
+        else:
+            thought_kwargs["thought_signature"] = sig
+
     if ptype == "text":
-        return types.Part.from_text(text=data.get("text", ""))
+        return types.Part(text=data.get("text", ""), **thought_kwargs)
     if ptype == "function_call":
+        fc_kwargs: dict[str, Any] = {
+            "name": data["name"],
+            "args": data.get("args", {}),
+        }
+        if data.get("id") is not None:
+            fc_kwargs["id"] = data["id"]
         return types.Part(
-            function_call=types.FunctionCall(
-                name=data["name"],
-                args=data.get("args", {}),
-                id=data.get("id"),
-            )
+            function_call=types.FunctionCall(**fc_kwargs),
+            **thought_kwargs,
         )
     if ptype == "function_response":
-        return types.Part.from_function_response(
-            name=data["name"],
-            response=data.get("response", {}),
+        return types.Part(
+            function_response=types.FunctionResponse(
+                name=data["name"],
+                response=data.get("response", {}),
+            ),
+            **thought_kwargs,
         )
-    return types.Part.from_text(text=data.get("text", ""))
+    return types.Part(text=data.get("text", ""), **thought_kwargs)
 
 
 def serialize_history(history: list) -> list[dict[str, Any]]:
