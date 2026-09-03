@@ -14,6 +14,7 @@
     { "src": "/api/(.*)", "dest": "api/index.py" },
     { "src": "/css/(.*)", "dest": "frontend/css/$1" },
     { "src": "/js/(.*)", "dest": "frontend/js/$1" },
+    { "src": "/dashboard", "dest": "frontend/dashboard.html" },
     { "src": "/dashboard.html", "dest": "frontend/dashboard.html" },
     { "src": "/(.*)", "dest": "frontend/$1" }
   ]

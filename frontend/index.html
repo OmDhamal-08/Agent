@@ -15,9 +15,14 @@
     <div class="chat-panel">
       <div class="chat-header">
         <h1>🧠 ShopMind AI <span class="badge">Agentic Commerce</span></h1>
-        <div class="header-actions" id="user-info" style="display: none;">
-          <span class="email-badge" id="user-email-display" title="Your email"></span>
-          <button class="btn-switch-account" onclick="switchAccount()">Switch</button>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <a href="/dashboard.html" target="_blank" style="color: #94a3b8; font-size: 0.8rem; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #475569; padding: 4px 10px; border-radius: 6px; font-weight: 500; transition: all 0.2s;" onmouseover="this.style.color='#f8fafc';this.style.borderColor='#94a3b8'" onmouseout="this.style.color='#94a3b8';this.style.borderColor='#475569'">
+            📊 Merchant Dashboard
+          </a>
+          <div class="header-actions" id="user-info" style="display: none;">
+            <span class="email-badge" id="user-email-display" title="Your email"></span>
+            <button class="btn-switch-account" onclick="switchAccount()">Switch</button>
+          </div>
         </div>
       </div>
 
