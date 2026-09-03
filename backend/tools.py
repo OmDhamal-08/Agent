@@ -660,5 +660,4 @@ TOOL_DISPATCH: Dict[str, Any] = {
     "initiate_checkout": initiate_checkout,
     "remove_from_cart": remove_from_cart,
     "clear_cart": clear_cart,
-    "get_pre_checkout_suggestions": get_pre_checkout_suggestions,
 }

@@ -3,12 +3,20 @@ FastAPI routes for the chat/agent conversation.
 
 Provides endpoints for sending messages, confirming/cancelling pending
 actions, and listing active sessions.
+
+Session state (conversation history + pending confirmations) is persisted
+in the ``session_state`` database table so that it survives across Vercel
+serverless cold starts.
 """
 
-import os
 import json
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import logging
+from typing import Any, Optional
+
 import asyncpg
+from fastapi import APIRouter, Depends, HTTPException
+from google.genai import types
 
 from backend.database import get_db
 from backend.models import ChatRequest, ConfirmActionRequest, ChatResponse
@@ -17,18 +25,15 @@ from backend.agent_loop import (
     execute_confirmed_action,
     cancel_action,
     PendingConfirmation,
+    PendingActionItem,
     AgentResponse,
     SYSTEM_PROMPT,
 )
 from backend.adapters.gemini_adapter import GeminiAdapter
 
-router = APIRouter(prefix='/api', tags=['chat'])
+logger = logging.getLogger(__name__)
 
-_sessions: dict[str, dict] = {}
-# _sessions[session_id] = {
-#     'history': [...],  # conversation history (Gemini Content objects)
-#     'pending': PendingConfirmation | None
-# }
+router = APIRouter(prefix='/api', tags=['chat'])
 
 _adapter: GeminiAdapter | None = None
 
@@ -48,15 +53,175 @@ def get_adapter() -> GeminiAdapter:
     return _adapter
 
 
-def _get_session(session_id: str) -> dict:
-    """Return the session dict for *session_id*, creating it if needed."""
-    if session_id not in _sessions:
-        _sessions[session_id] = {
-            'history': [],
-            'pending': None,
-        }
-    return _sessions[session_id]
+# ---------------------------------------------------------------------------
+# Serialisation helpers — Gemini Content ↔ JSON
+# ---------------------------------------------------------------------------
 
+def _serialize_part(part: types.Part) -> dict[str, Any]:
+    """Convert a single ``types.Part`` to a JSON-safe dict."""
+    if part.text is not None:
+        return {"type": "text", "text": part.text}
+    if part.function_call is not None:
+        return {
+            "type": "function_call",
+            "name": part.function_call.name,
+            "args": dict(part.function_call.args) if part.function_call.args else {},
+            "id": getattr(part.function_call, "id", None),
+        }
+    if part.function_response is not None:
+        return {
+            "type": "function_response",
+            "name": part.function_response.name,
+            "response": dict(part.function_response.response) if part.function_response.response else {},
+            "id": getattr(part.function_response, "id", None),
+        }
+    return {"type": "text", "text": ""}
+
+
+def _deserialize_part(data: dict[str, Any]) -> types.Part:
+    """Reconstruct a ``types.Part`` from a serialised dict."""
+    ptype = data.get("type", "text")
+    if ptype == "text":
+        return types.Part.from_text(text=data.get("text", ""))
+    if ptype == "function_call":
+        return types.Part(
+            function_call=types.FunctionCall(
+                name=data["name"],
+                args=data.get("args", {}),
+                id=data.get("id"),
+            )
+        )
+    if ptype == "function_response":
+        return types.Part.from_function_response(
+            name=data["name"],
+            response=data.get("response", {}),
+        )
+    return types.Part.from_text(text=data.get("text", ""))
+
+
+def serialize_history(history: list) -> list[dict[str, Any]]:
+    """Serialise a list of ``types.Content`` objects to JSON-safe dicts."""
+    result: list[dict[str, Any]] = []
+    for content in history:
+        parts = []
+        if hasattr(content, "parts") and content.parts:
+            for part in content.parts:
+                parts.append(_serialize_part(part))
+        role = getattr(content, "role", "user") or "user"
+        result.append({"role": role, "parts": parts})
+    return result
+
+
+def deserialize_history(data: list[dict[str, Any]]) -> list[types.Content]:
+    """Reconstruct a list of ``types.Content`` objects from serialised dicts."""
+    result: list[types.Content] = []
+    for item in data:
+        parts = [_deserialize_part(p) for p in item.get("parts", [])]
+        result.append(types.Content(role=item.get("role", "user"), parts=parts))
+    return result
+
+
+def _serialize_pending(pending: PendingConfirmation) -> dict[str, Any]:
+    """Serialise a ``PendingConfirmation`` to a JSON-safe dict."""
+    actions_data = []
+    for action in (pending.actions or []):
+        actions_data.append({
+            "tool_name": action.tool_name,
+            "tool_args": action.tool_args,
+            "description": action.description,
+            "ai_action_log_id": action.ai_action_log_id,
+            "call_id": action.call_id,
+        })
+    return {
+        "action_id": pending.action_id,
+        "tool_name": pending.tool_name,
+        "tool_args": pending.tool_args,
+        "description": pending.description,
+        "ai_action_log_id": pending.ai_action_log_id,
+        "actions": actions_data,
+    }
+
+
+def _deserialize_pending(data: dict[str, Any]) -> PendingConfirmation:
+    """Reconstruct a ``PendingConfirmation`` from a serialised dict."""
+    actions = []
+    for a in data.get("actions", []):
+        actions.append(PendingActionItem(
+            tool_name=a["tool_name"],
+            tool_args=a["tool_args"],
+            description=a["description"],
+            ai_action_log_id=a.get("ai_action_log_id"),
+            call_id=a.get("call_id"),
+        ))
+    return PendingConfirmation(
+        action_id=data["action_id"],
+        tool_name=data["tool_name"],
+        tool_args=data["tool_args"],
+        description=data["description"],
+        ai_action_log_id=data.get("ai_action_log_id"),
+        actions=actions,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Database-backed session state
+# ---------------------------------------------------------------------------
+
+async def _load_session(conn: asyncpg.Connection, session_id: str) -> dict:
+    """Load session state from the database, or return empty defaults."""
+    row = await conn.fetchrow(
+        "SELECT conversation_history, pending_action FROM session_state WHERE session_id = $1",
+        session_id,
+    )
+    if row is None:
+        return {"history": [], "pending": None}
+
+    # conversation_history is stored as JSONB
+    raw_history = row["conversation_history"]
+    if isinstance(raw_history, str):
+        raw_history = json.loads(raw_history)
+    history = deserialize_history(raw_history) if raw_history else []
+
+    # pending_action is stored as JSONB (nullable)
+    raw_pending = row["pending_action"]
+    pending = None
+    if raw_pending:
+        if isinstance(raw_pending, str):
+            raw_pending = json.loads(raw_pending)
+        pending = _deserialize_pending(raw_pending)
+
+    return {"history": history, "pending": pending}
+
+
+async def _save_session(
+    conn: asyncpg.Connection,
+    session_id: str,
+    history: list,
+    pending: Optional[PendingConfirmation],
+) -> None:
+    """Persist session state to the database."""
+    history_json = json.dumps(serialize_history(history))
+    pending_json = json.dumps(_serialize_pending(pending)) if pending else None
+
+    await conn.execute(
+        """
+        INSERT INTO session_state (session_id, conversation_history, pending_action, updated_at)
+        VALUES ($1, $2::jsonb, $3::jsonb, NOW())
+        ON CONFLICT (session_id)
+        DO UPDATE SET
+            conversation_history = EXCLUDED.conversation_history,
+            pending_action = EXCLUDED.pending_action,
+            updated_at = NOW()
+        """,
+        session_id,
+        history_json,
+        pending_json,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Response conversion
+# ---------------------------------------------------------------------------
 
 def _to_chat_response(resp: AgentResponse) -> ChatResponse:
     """Convert an internal AgentResponse dataclass to a Pydantic ChatResponse."""
@@ -77,6 +242,10 @@ def _to_chat_response(resp: AgentResponse) -> ChatResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
 @router.post('/chat', response_model=ChatResponse)
 async def chat(req: ChatRequest, conn: asyncpg.Connection = Depends(get_db)) -> ChatResponse:
     """Main chat endpoint.
@@ -84,9 +253,9 @@ async def chat(req: ChatRequest, conn: asyncpg.Connection = Depends(get_db)) -> 
     Accepts a user message, runs the agent loop, and returns the agent's
     response.  If the agent proposes a side-effecting action the response
     type will be ``pending_confirmation`` and the pending action is stored
-    in the session so the frontend can confirm or cancel it.
+    in the database so the frontend can confirm or cancel it.
     """
-    session = _get_session(req.session_id)
+    session = await _load_session(conn, req.session_id)
     adapter = get_adapter()
 
     response = await run_agent(
@@ -97,12 +266,9 @@ async def chat(req: ChatRequest, conn: asyncpg.Connection = Depends(get_db)) -> 
         adapter,
     )
 
-    # Stash pending confirmation so /confirm and /cancel can pick it up
-    if response.type == 'pending_confirmation':
-        session['pending'] = response.pending_action
-    else:
-        # Any non-confirmation response clears a stale pending action
-        session['pending'] = None
+    # Persist updated state
+    pending = response.pending_action if response.type == 'pending_confirmation' else None
+    await _save_session(conn, req.session_id, response.conversation_history, pending)
 
     return _to_chat_response(response)
 
@@ -122,10 +288,7 @@ async def confirm_action(
         HTTPException 404: If there is no pending action or the action_id
             does not match.
     """
-    if req.session_id not in _sessions:
-        raise HTTPException(status_code=400, detail='Session not found')
-
-    session = _sessions[req.session_id]
+    session = await _load_session(conn, req.session_id)
     pending: PendingConfirmation | None = session.get('pending')
 
     if pending is None:
@@ -147,11 +310,9 @@ async def confirm_action(
         adapter,
     )
 
-    # Update pending confirmation if next action was proposed (e.g. checkout after cart)
-    if response.type == 'pending_confirmation':
-        session['pending'] = response.pending_action
-    else:
-        session['pending'] = None
+    # Persist updated state
+    new_pending = response.pending_action if response.type == 'pending_confirmation' else None
+    await _save_session(conn, req.session_id, response.conversation_history, new_pending)
 
     return _to_chat_response(response)
 
@@ -168,10 +329,7 @@ async def cancel_pending_action(
         HTTPException 404: If there is no pending action or the action_id
             does not match.
     """
-    if req.session_id not in _sessions:
-        raise HTTPException(status_code=400, detail='Session not found')
-
-    session = _sessions[req.session_id]
+    session = await _load_session(conn, req.session_id)
     pending: PendingConfirmation | None = session.get('pending')
 
     if pending is None:
@@ -193,20 +351,21 @@ async def cancel_pending_action(
         adapter,
     )
 
-    # Update pending confirmation if next action was proposed
-    if response.type == 'pending_confirmation':
-        session['pending'] = response.pending_action
-    else:
-        session['pending'] = None
+    # Persist updated state
+    new_pending = response.pending_action if response.type == 'pending_confirmation' else None
+    await _save_session(conn, req.session_id, response.conversation_history, new_pending)
 
     return _to_chat_response(response)
 
 
 @router.get('/sessions')
-async def list_sessions() -> dict:
+async def list_sessions(conn: asyncpg.Connection = Depends(get_db)) -> dict:
     """List all active session IDs.
 
     Returns a JSON object with a single key ``sessions`` containing a list
     of session-id strings.  Useful for the admin / debug dashboard.
     """
-    return {'sessions': list(_sessions.keys())}
+    rows = await conn.fetch(
+        "SELECT session_id FROM session_state ORDER BY updated_at DESC LIMIT 100"
+    )
+    return {'sessions': [row['session_id'] for row in rows]}

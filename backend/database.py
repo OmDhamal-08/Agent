@@ -58,6 +58,16 @@ async def create_pool() -> asyncpg.Pool:
         await connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)"
         )
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS session_state (
+                session_id TEXT PRIMARY KEY,
+                conversation_history JSONB NOT NULL DEFAULT '[]',
+                pending_action JSONB,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
     return _pool
 
 
@@ -94,6 +104,17 @@ async def get_db() -> AsyncGenerator[asyncpg.Connection, None]:
             timeout=10,
         )
         try:
+            # Ensure session_state table exists on serverless cold starts
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS session_state (
+                    session_id TEXT PRIMARY KEY,
+                    conversation_history JSONB NOT NULL DEFAULT '[]',
+                    pending_action JSONB,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
             yield conn
         finally:
             await conn.close()

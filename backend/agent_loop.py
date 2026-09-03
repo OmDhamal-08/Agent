@@ -67,20 +67,7 @@ CRITICAL RULES — follow these exactly:
 
 12. CART REMOVAL & CLEAR: When a customer asks to remove an item from their cart, call remove_from_cart with the product_id. When they ask to clear or empty their entire cart, call clear_cart. These actions execute immediately without requiring confirmation.
 
-13. PRE-CHECKOUT SUGGESTIONS: When the customer requests checkout/payment:
-   a) If they also asked to add products, add those first.
-   b) ONLY call `get_pre_checkout_suggestions` the FIRST time the customer requests checkout in this conversation. If you have already called `get_pre_checkout_suggestions` earlier in this conversation (whether the customer added items from the suggestions or skipped them), do NOT call it again — proceed directly to `initiate_checkout`.
-   c) If suggestions are returned (count > 0), present them as a numbered list with prices and briefly explain why each fits the customer's cart. Ask: "Would you like to add any of these? Just say the number(s), or say 'no thanks' to proceed to checkout."
-   d) If the user picks items, add them with source='ai_upsell', then call `initiate_checkout`.
-   e) If the user says skip/no/no thanks, call `initiate_checkout` directly.
-   f) If `get_pre_checkout_suggestions` returns 0 suggestions, proceed directly to `initiate_checkout`.
-
-14. PRE-CHECKOUT PRESENTATION STYLE: When presenting pre-checkout suggestions:
-   - Number each suggestion clearly (1, 2, 3...)
-   - Show the price in ₹
-   - Briefly explain why it's relevant (e.g., "pairs great with your gaming laptop for precise control")
-   - Always give the user the option to skip ("or say 'no thanks' to proceed to checkout")
-   - Keep it helpful and conversational, never pushy or aggressive
+13. DIRECT CHECKOUT: When the customer requests checkout/payment, proceed directly to calling `initiate_checkout`. Do NOT suggest additional products at checkout time — you have already suggested complementary items when products were added to the cart (Rule 11). Do not delay checkout with extra suggestions.
 """
 
 
