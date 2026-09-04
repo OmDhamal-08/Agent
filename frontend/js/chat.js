@@ -185,13 +185,12 @@ async function sendMessage() {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      const errDetail = data && (data.detail || data.message);
-      addMessage('agent', `⚠️ ${errDetail || 'Something went wrong connecting to the server. Please try again.'}`);
+      addMessage('agent', '⚠️ Something went wrong connecting to the server. Please try again in a moment.');
       return;
     }
 
     if (data.type === 'error') {
-      addMessage('agent', `⚠️ ${data.content || 'An error occurred while processing your request.'}`);
+      addMessage('agent', data.content || 'I had trouble processing that request. Could you please try again?');
       return;
     }
 
@@ -235,8 +234,7 @@ async function handleConfirm(actionId) {
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      const errDetail = data && (data.detail || data.message);
-      addMessage('agent', `⚠️ ${errDetail || 'Something went wrong processing your confirmation. Please try again.'}`);
+      addMessage('agent', '⚠️ Something went wrong processing your confirmation. Please try again.');
       pendingAction = null;
       return;
     }

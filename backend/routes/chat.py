@@ -31,26 +31,36 @@ from backend.agent_loop import (
     SYSTEM_PROMPT,
 )
 from backend.adapters.gemini_adapter import GeminiAdapter
+from backend.adapters.key_pool import GeminiKeyPool
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['chat'])
 
 _adapter: GeminiAdapter | None = None
+_key_pool: GeminiKeyPool | None = None
 
 
 def get_adapter() -> GeminiAdapter:
     """Return (and lazily create) the module-level GeminiAdapter instance.
 
+    Uses ``GeminiKeyPool`` for multi-key rotation when ``GEMINI_API_KEYS``
+    is set; falls back to single ``GEMINI_API_KEY`` for backwards compat.
+
     Raises:
-        RuntimeError: If the ``GEMINI_API_KEY`` environment variable is not set.
+        RuntimeError: If no Gemini API key is configured.
     """
-    global _adapter
+    global _adapter, _key_pool
     if _adapter is None:
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise RuntimeError('GEMINI_API_KEY not set')
-        _adapter = GeminiAdapter(api_key=api_key)
+        try:
+            _key_pool = GeminiKeyPool.from_env()
+            _adapter = GeminiAdapter(key_pool=_key_pool)
+        except (ValueError, RuntimeError):
+            # Fallback to single key
+            api_key = os.getenv('GEMINI_API_KEY')
+            if not api_key:
+                raise RuntimeError('GEMINI_API_KEY not set')
+            _adapter = GeminiAdapter(api_key=api_key)
     return _adapter
 
 

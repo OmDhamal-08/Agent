@@ -15,21 +15,30 @@ from fastapi import APIRouter, Depends, Query
 from backend.auth import get_current_admin
 from backend.campaign_agent import run_campaign_scan
 from backend.adapters.gemini_adapter import GeminiAdapter
+from backend.adapters.key_pool import GeminiKeyPool
 from backend.database import get_db
 
 router = APIRouter(prefix='/api/campaigns', tags=['campaigns'])
 
 _adapter: GeminiAdapter | None = None
+_key_pool: GeminiKeyPool | None = None
 
 
 def _get_adapter() -> GeminiAdapter:
-    """Return (and lazily create) a GeminiAdapter for the campaign agent."""
-    global _adapter
+    """Return (and lazily create) a GeminiAdapter for the campaign agent.
+
+    Uses ``GeminiKeyPool`` for multi-key rotation when available.
+    """
+    global _adapter, _key_pool
     if _adapter is None:
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            raise RuntimeError('GEMINI_API_KEY not set')
-        _adapter = GeminiAdapter(api_key=api_key)
+        try:
+            _key_pool = GeminiKeyPool.from_env()
+            _adapter = GeminiAdapter(key_pool=_key_pool)
+        except (ValueError, RuntimeError):
+            api_key = os.getenv('GEMINI_API_KEY')
+            if not api_key:
+                raise RuntimeError('GEMINI_API_KEY not set')
+            _adapter = GeminiAdapter(api_key=api_key)
     return _adapter
 
 

@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import asyncpg
 
 from backend.adapters.gemini_adapter import GeminiAdapter, LLMResponse
+from backend.error_messages import get_customer_error_message
 from backend.logging_middleware import log_tool_call
 from backend.tool_definitions import TOOL_DEFINITIONS, TOOLS_REQUIRING_CONFIRMATION
 from backend.tools import TOOL_DISPATCH
@@ -216,7 +217,7 @@ async def _run_loop(
         except Exception as e:
             return AgentResponse(
                 type="error",
-                content=f"I'm having trouble connecting to my AI backend. Please try again in a moment. (Error: {str(e)})",
+                content=get_customer_error_message(e),
                 conversation_history=conversation_history,
                 tool_calls_made=tool_calls_count,
                 tool_result=confirmed_result,

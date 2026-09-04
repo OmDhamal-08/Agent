@@ -21,6 +21,7 @@ from backend.campaign_tools import (
     get_cart_context,
     record_campaign_decision,
 )
+from backend.error_messages import get_campaign_fallback_decision
 from backend.logging_middleware import log_tool_call
 
 logger = logging.getLogger(__name__)
@@ -150,20 +151,21 @@ async def _evaluate_single_cart(
         )
     except Exception as e:
         logger.error(f"LLM call failed for session {session_id}: {e}")
-        # Record a fallback no_action decision
+        # Use clean merchant-facing message instead of raw error string
+        clean_decision = get_campaign_fallback_decision(e)
         result = await record_campaign_decision(
             conn=conn,
             session_id=session_id,
             cart_snapshot=cart_ctx["cart"]["items"],
             cart_value=cart_summary["cart_value"],
             cart_age_minutes=cart_summary["cart_age_minutes"],
-            decision=f"LLM call failed ({str(e)[:100]}). Defaulting to no_action.",
+            decision=clean_decision,
             action_taken="no_action",
         )
         return {
             "session_id": session_id,
             "action_taken": "no_action",
-            "decision": f"LLM error: {str(e)[:100]}",
+            "decision": clean_decision,
             **result,
         }
 
@@ -224,16 +226,17 @@ async def _evaluate_single_cart(
                     )
                 except Exception as e:
                     logger.error(f"Second LLM call failed for session {session_id}: {e}")
+                    clean_decision = get_campaign_fallback_decision(e)
                     result = await record_campaign_decision(
                         conn=conn,
                         session_id=session_id,
                         cart_snapshot=cart_ctx["cart"]["items"],
                         cart_value=cart_summary["cart_value"],
                         cart_age_minutes=cart_summary["cart_age_minutes"],
-                        decision=f"LLM follow-up call failed. Defaulting to no_action.",
+                        decision=clean_decision,
                         action_taken="no_action",
                     )
-                    return {"session_id": session_id, "action_taken": "no_action", **result}
+                    return {"session_id": session_id, "action_taken": "no_action", "decision": clean_decision, **result}
 
                 if llm_response2.tool_calls:
                     for tc2 in llm_response2.tool_calls:
@@ -372,7 +375,7 @@ async def run_campaign_scan(
             decisions.append({
                 "session_id":   cart["session_id"],
                 "action_taken": "no_action",
-                "decision":     f"Error during evaluation: {str(e)[:200]}",
+                "decision":     get_campaign_fallback_decision(e),
                 "error":        True,
             })
 

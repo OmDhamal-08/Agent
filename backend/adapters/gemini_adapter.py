@@ -12,6 +12,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from backend.adapters.key_pool import GeminiKeyPool
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -98,19 +100,37 @@ def _convert_schema(schema_dict: dict) -> dict[str, Any]:
     return result
 
 class GeminiAdapter:
-    """Adapter that wraps the Google Gemini (``google-genai``) SDK."""
+    """Adapter that wraps the Google Gemini (``google-genai``) SDK.
 
-    def __init__(self, api_key: str, model: str | None = None) -> None:
+    Supports two modes:
+    - **Single key**: pass ``api_key`` for backwards compatibility.
+    - **Key pool**: pass a ``GeminiKeyPool`` for multi-key rotation.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        key_pool: GeminiKeyPool | None = None,
+    ) -> None:
         """Initialise the adapter.
 
         Args:
-            api_key: Google AI API key.
-            model: The Gemini model identifier to use (defaults to GEMINI_MODEL env var or gemini-2.5-flash).
+            api_key: Google AI API key (used if ``key_pool`` is not provided).
+            model: The Gemini model identifier to use.
+            key_pool: Optional ``GeminiKeyPool`` for multi-key rotation.
         """
+        self._key_pool = key_pool
+        if key_pool is not None:
+            # Pool mode — client is acquired per-call
+            self.client = None
+        elif api_key:
+            self.client = genai.Client(api_key=api_key)
+        else:
+            raise ValueError("Either api_key or key_pool must be provided.")
 
-        self.client = genai.Client(api_key=api_key)
         self.model = model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-        logger.info("GeminiAdapter initialised with model=%s", self.model)
+        logger.info("GeminiAdapter initialised with model=%s, pool=%s", self.model, key_pool is not None)
 
     async def call_llm(
         self,
@@ -119,6 +139,10 @@ class GeminiAdapter:
         system_instruction: str | None = None,
     ) -> LLMResponse:
         """Send a request to the Gemini model and return a structured response.
+
+        When a ``GeminiKeyPool`` is configured, quota errors (429 /
+        RESOURCE_EXHAUSTED) trigger an immediate rotation to the next
+        healthy key rather than a blind retry on the same key.
 
         The synchronous ``generate_content`` call is offloaded to a thread
         via ``asyncio.to_thread`` so that the event loop is never blocked.
@@ -136,7 +160,7 @@ class GeminiAdapter:
 
         Raises:
             Exception: Propagates any errors from the Gemini API after
-                logging them.
+                exhausting all retries / keys.
         """
 
         # Convert tools
@@ -151,23 +175,79 @@ class GeminiAdapter:
             temperature=0.2,
         )
 
-        for attempt in range(3):
-            try:
-                response = await asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.model,
-                    contents=conversation_history,
-                    config=config,
-                )
-                return self._parse_response(response)
-            except Exception as e:
-                err_str = str(e)
-                if any(k in err_str for k in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "RemoteProtocolError")) and attempt < 2:
-                    logger.warning("Temporary Gemini error or rate limit hit, retrying in %ds (attempt %d/3)...", 3 * (attempt + 1), attempt + 1)
-                    await asyncio.sleep(3 * (attempt + 1))
-                    continue
-                logger.exception("Gemini API call failed")
-                raise
+        _QUOTA_MARKERS = ("429", "RESOURCE_EXHAUSTED")
+        _RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "RemoteProtocolError")
+
+        if self._key_pool is not None:
+            # ── Pool mode: rotate keys on quota errors ──
+            max_attempts = self._key_pool.total_count() + 2  # allow full rotation + retries
+            last_exc: Exception | None = None
+
+            for attempt in range(max_attempts):
+                try:
+                    client, key_idx = self._key_pool.acquire()
+                except RuntimeError as pool_err:
+                    # All keys on cooldown
+                    logger.error("Key pool exhausted: %s", pool_err)
+                    raise pool_err from last_exc
+
+                try:
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=self.model,
+                        contents=conversation_history,
+                        config=config,
+                    )
+                    self._key_pool.report_success(key_idx)
+                    return self._parse_response(response)
+                except Exception as e:
+                    err_str = str(e)
+                    last_exc = e
+
+                    if any(k in err_str for k in _QUOTA_MARKERS):
+                        # Quota hit → cooldown this key, rotate immediately
+                        self._key_pool.report_quota_error(key_idx)
+                        logger.warning(
+                            "Key %d hit quota limit (attempt %d/%d), rotating to next key...",
+                            key_idx, attempt + 1, max_attempts,
+                        )
+                        continue
+
+                    if any(k in err_str for k in _RETRYABLE_MARKERS) and attempt < max_attempts - 1:
+                        logger.warning(
+                            "Transient Gemini error (attempt %d/%d), retrying in %ds...",
+                            attempt + 1, max_attempts, 3 * (attempt + 1),
+                        )
+                        await asyncio.sleep(3 * (attempt + 1))
+                        continue
+
+                    # Non-retryable error
+                    logger.exception("Gemini API call failed (non-retryable)")
+                    raise
+
+            # Exhausted all attempts
+            logger.exception("Gemini API call failed after %d attempts", max_attempts)
+            raise last_exc  # type: ignore[misc]
+
+        else:
+            # ── Legacy single-key mode ──
+            for attempt in range(3):
+                try:
+                    response = await asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.model,
+                        contents=conversation_history,
+                        config=config,
+                    )
+                    return self._parse_response(response)
+                except Exception as e:
+                    err_str = str(e)
+                    if any(k in err_str for k in (*_QUOTA_MARKERS, *_RETRYABLE_MARKERS)) and attempt < 2:
+                        logger.warning("Temporary Gemini error or rate limit hit, retrying in %ds (attempt %d/3)...", 3 * (attempt + 1), attempt + 1)
+                        await asyncio.sleep(3 * (attempt + 1))
+                        continue
+                    logger.exception("Gemini API call failed")
+                    raise
 
     @staticmethod
     def _parse_response(response: Any) -> LLMResponse:

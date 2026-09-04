@@ -393,7 +393,7 @@ async function runCampaignScan() {
   } catch (err) {
     statusEl.style.background = 'rgba(239,68,68,0.08)';
     statusEl.style.color = 'var(--danger)';
-    statusEl.textContent = `❌ Scan failed: ${err.message}`;
+    statusEl.textContent = '❌ Campaign scan could not be completed. Please try again in a few moments.';
     console.error('Campaign scan failed:', err);
   } finally {
     btn.disabled = false;
