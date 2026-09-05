@@ -177,6 +177,7 @@ class GeminiAdapter:
 
         _QUOTA_MARKERS = ("429", "RESOURCE_EXHAUSTED")
         _RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "RemoteProtocolError")
+        _AUTH_MARKERS = ("401", "UNAUTHENTICATED", "INVALID_ARGUMENT", "API key not valid")
 
         if self._key_pool is not None:
             # ── Pool mode: rotate keys on quota errors ──
@@ -210,6 +211,15 @@ class GeminiAdapter:
                         logger.warning(
                             "Key %d hit quota limit (attempt %d/%d), rotating to next key...",
                             key_idx, attempt + 1, max_attempts,
+                        )
+                        continue
+
+                    if any(k in err_str for k in _AUTH_MARKERS):
+                        # Auth error → bad key, long cooldown and rotate
+                        self._key_pool.report_quota_error(key_idx)
+                        logger.warning(
+                            "Key %d auth error (attempt %d/%d), rotating to next key: %s",
+                            key_idx, attempt + 1, max_attempts, err_str[:120],
                         )
                         continue
 
