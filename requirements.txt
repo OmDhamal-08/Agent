@@ -1,7 +1,7 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 asyncpg==0.30.0
-google-genai==2.19.0
+google-genai==2.22.0
 razorpay==1.4.2
 setuptools
 python-dotenv==1.0.1
